@@ -1,5 +1,6 @@
 import Commander
 import Foundation
+import SQLite
 import Testing
 
 @testable import IMsgCore
@@ -143,7 +144,8 @@ func sendCommandRunsWithStubSender() async throws {
     runtime: runtime,
     sendMessage: { options in
       captured = options
-    }
+    },
+    resolveSentMessage: { _, _, _, _ in nil }
   )
   #expect(captured?.recipient == "+15551234567")
   #expect(captured?.text == "hi")
@@ -164,11 +166,45 @@ func sendCommandResolvesChatID() async throws {
     runtime: runtime,
     sendMessage: { options in
       captured = options
-    }
+    },
+    resolveSentMessage: { _, _, _, _ in nil }
   )
   #expect(captured?.chatIdentifier == "+123")
   #expect(captured?.chatGUID == "iMessage;+;chat123")
   #expect(captured?.recipient.isEmpty == true)
+}
+
+@Test
+func sendCommandRejectsMisroutedChatGhost() async throws {
+  let path = try CommandTestDatabase.makePath()
+  let values = ParsedValues(
+    positional: [],
+    options: ["db": [path], "chatID": ["1"], "text": ["hi"]],
+    flags: ["jsonOutput"]
+  )
+  let runtime = RuntimeOptions(parsedValues: values)
+
+  do {
+    try await SendCommand.run(
+      values: values,
+      runtime: runtime,
+      sendMessage: { _ in
+        let db = try Connection(path)
+        try db.run("INSERT INTO handle(ROWID, id) VALUES (99, 'iMessage;+;chat123')")
+        try db.run(
+          """
+          INSERT INTO message(ROWID, handle_id, text, date, is_from_me, service)
+          VALUES (99, 99, '', ?, 1, 'SMS')
+          """,
+          CommandTestDatabase.appleEpoch(Date())
+        )
+      },
+      resolveSentMessage: { _, _, _, _ in nil }
+    )
+    #expect(Bool(false))
+  } catch let error as IMsgError {
+    #expect(error.localizedDescription.contains("unjoined empty outgoing row"))
+  }
 }
 
 private func jsonObject(from output: String) throws -> [String: Any] {

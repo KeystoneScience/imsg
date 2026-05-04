@@ -1,4 +1,5 @@
 import Foundation
+import SQLite
 import Testing
 
 @testable import IMsgCore
@@ -155,6 +156,37 @@ func rpcSendKeepsOkResponseWhenSentMessageIsNotResolved() async throws {
   #expect(result?["ok"] as? Bool == true)
   #expect(result?["id"] == nil)
   #expect(result?["guid"] == nil)
+}
+
+@Test
+func rpcSendReportsMisroutedChatGhost() async throws {
+  let store = try CommandTestDatabase.makeStoreForRPC()
+  let output = TestRPCOutput()
+  let server = RPCServer(
+    store: store,
+    verbose: false,
+    output: output,
+    sendMessage: { _ in
+      try store.withConnection { db in
+        try db.run("INSERT INTO handle(ROWID, id) VALUES (99, 'iMessage;+;chat123')")
+        try db.run(
+          """
+          INSERT INTO message(ROWID, handle_id, text, date, is_from_me, service)
+          VALUES (99, 99, '', ?, 1, 'SMS')
+          """,
+          CommandTestDatabase.appleEpoch(Date())
+        )
+      }
+    },
+    resolveSentMessage: { _, _, _, _ in nil }
+  )
+
+  let line = #"{"jsonrpc":"2.0","id":"3d","method":"send","params":{"chat_id":1,"text":"yo"}}"#
+  await server.handleLineForTesting(line)
+
+  let error = output.errors.first?["error"] as? [String: Any]
+  #expect(int64Value(error?["code"]) == -32603)
+  #expect((error?["data"] as? String)?.contains("unjoined empty outgoing row") == true)
 }
 
 @Test

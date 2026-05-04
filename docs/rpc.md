@@ -76,6 +76,11 @@ observed in `chat.db` after Messages accepts the send. Attachment-only sends,
 delayed database writes, or ambiguous direct sends may still return only
 `{ "ok": true }`.
 
+For chat-target sends, `send` also checks for the Tahoe Messages.app failure
+mode where AppleScript returns success but writes an empty outgoing SMS row that
+is not joined to the target chat. That case is reported as an error instead of
+`{ "ok": true }`.
+
 ## Objects
 
 ### Chat

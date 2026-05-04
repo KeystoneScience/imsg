@@ -124,21 +124,11 @@ final class RPCServer {
     chatID: Int64?,
     sentAt: Date
   ) async throws -> Message? {
-    guard !options.text.isEmpty else { return nil }
-
-    let lowerBound = sentAt.addingTimeInterval(-2)
-    let deadline = Date().addingTimeInterval(2)
-    repeat {
-      if Task.isCancelled { return nil }
-      if let message = try store.latestSentMessage(
-        matchingText: options.text,
-        chatID: chatID,
-        since: lowerBound
-      ) {
-        return message
-      }
-      try await Task.sleep(nanoseconds: 100_000_000)
-    } while Date() < deadline
-    return nil
+    try await SentMessageVerifier.resolveSentMessage(
+      store: store,
+      options: options,
+      chatID: chatID,
+      sentAt: sentAt
+    )
   }
 }

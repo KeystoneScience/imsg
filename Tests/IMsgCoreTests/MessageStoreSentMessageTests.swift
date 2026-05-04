@@ -92,6 +92,49 @@ func latestSentMessageFallsBackToNewestOutgoingTextWithoutChatFilter() throws {
   #expect(message?.guid == "chat-two-guid")
 }
 
+@Test
+func chatInfoMatchingTargetHandlesAnyGroupPolarityMismatch() throws {
+  let db = try makeSentMessageDatabase()
+  try db.run(
+    """
+    UPDATE chat
+    SET chat_identifier = 'any;+;chat134', guid = 'any;+;chat134'
+    WHERE ROWID = 1
+    """
+  )
+  let store = try MessageStore(connection: db, path: ":memory:")
+
+  let info = try store.chatInfo(matchingTarget: "any;-;chat134")
+
+  #expect(info?.id == 1)
+  #expect(info?.guid == "any;+;chat134")
+}
+
+@Test
+func latestUnjoinedSentMessageRowIDMatchesAnyGroupTargetVariants() throws {
+  let db = try makeSentMessageDatabase()
+  let now = Date()
+  try db.run("INSERT INTO handle(ROWID, id) VALUES (2, 'any;-;chat134')")
+  try db.run(
+    """
+    INSERT INTO message(
+      ROWID, handle_id, text, guid, associated_message_guid, associated_message_type,
+      date, is_from_me, service
+    )
+    VALUES (20, 2, '', 'ghost-guid', NULL, 0, ?, 1, 'SMS')
+    """,
+    TestDatabase.appleEpoch(now)
+  )
+  let store = try MessageStore(connection: db, path: ":memory:")
+
+  let rowID = try store.latestUnjoinedSentMessageRowID(
+    matchingTargetHandles: ["any;+;chat134"],
+    since: now.addingTimeInterval(-1)
+  )
+
+  #expect(rowID == 20)
+}
+
 private func makeSentMessageDatabase() throws -> Connection {
   let db = try Connection(.inMemory)
   try db.execute(

@@ -20,6 +20,9 @@
 - `imsg send --chat-guid <guid>` (portable).
 - Uses AppleScript `chat id "<handle>"` for group sends (Jared pattern).
 - Attachments supported same as direct sends.
+- On macOS 26/Tahoe, Messages.app can report success while creating an empty
+  unjoined SMS row instead of delivering to the group. `imsg` detects that ghost
+  row and reports the send as failed.
 
 ## Inbound metadata (JSON)
 The direct CLI (`imsg chats`, `imsg history`, `imsg watch`) and JSON-RPC surface include:

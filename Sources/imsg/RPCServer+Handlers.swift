@@ -184,7 +184,17 @@ extension RPCServer {
     let sentAt = Date()
     try sendMessage(options)
 
-    let sentMessage = try? await resolveSentMessage(store, options, input.chatID, sentAt)
+    let verificationChatID =
+      input.chatID
+      ?? resolvedTarget.preferredIdentifier.flatMap { try? store.chatInfo(matchingTarget: $0)?.id }
+    let sentMessage = try? await resolveSentMessage(store, options, verificationChatID, sentAt)
+    if sentMessage == nil {
+      try SentMessageVerifier.throwIfMisroutedChatSend(
+        store: store,
+        options: options,
+        sentAt: sentAt
+      )
+    }
     var result: [String: Any] = ["ok": true]
     if let sentMessage {
       result["id"] = sentMessage.rowID

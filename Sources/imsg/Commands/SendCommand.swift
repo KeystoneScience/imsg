@@ -39,9 +39,17 @@ enum SendCommand {
     values: ParsedValues,
     runtime: RuntimeOptions,
     sendMessage: @escaping (MessageSendOptions) throws -> Void = { try MessageSender().send($0) },
+    resolveSentMessage:
+      @escaping (
+        MessageStore,
+        MessageSendOptions,
+        Int64?,
+        Date
+      ) async throws -> Message? = SentMessageVerifier.resolveSentMessage,
     storeFactory: @escaping (String) throws -> MessageStore = { try MessageStore(path: $0) }
   ) async throws {
     let dbPath = values.option("db") ?? MessageStore.defaultPath
+    let store = try storeFactory(dbPath)
     let input = ChatTargetInput(
       recipient: values.option("to") ?? "",
       chatID: values.optionInt64("chatID"),
@@ -68,7 +76,6 @@ enum SendCommand {
     let resolvedTarget = try await ChatTargetResolver.resolveChatTarget(
       input: input,
       lookupChat: { chatID in
-        let store = try storeFactory(dbPath)
         return try store.chatInfo(chatID: chatID)
       },
       unknownChatError: { chatID in
@@ -79,16 +86,33 @@ enum SendCommand {
       throw IMsgError.invalidChatTarget("Missing chat identifier or guid")
     }
 
-    try sendMessage(
-      MessageSendOptions(
-        recipient: input.recipient,
-        text: text,
-        attachmentPath: file,
-        service: service,
-        region: region,
-        chatIdentifier: resolvedTarget.chatIdentifier,
-        chatGUID: resolvedTarget.chatGUID
-      ))
+    let options = MessageSendOptions(
+      recipient: input.recipient,
+      text: text,
+      attachmentPath: file,
+      service: service,
+      region: region,
+      chatIdentifier: resolvedTarget.chatIdentifier,
+      chatGUID: resolvedTarget.chatGUID
+    )
+    let sentAt = Date()
+    try sendMessage(options)
+
+    if input.hasChatTarget {
+      let verificationChatID =
+        input.chatID
+        ?? resolvedTarget.preferredIdentifier.flatMap {
+          try? store.chatInfo(matchingTarget: $0)?.id
+        }
+      let sentMessage = try? await resolveSentMessage(store, options, verificationChatID, sentAt)
+      if sentMessage == nil {
+        try SentMessageVerifier.throwIfMisroutedChatSend(
+          store: store,
+          options: options,
+          sentAt: sentAt
+        )
+      }
+    }
 
     if runtime.jsonOutput {
       try StdoutWriter.writeJSONLine(["status": "sent"])
