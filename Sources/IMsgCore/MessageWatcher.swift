@@ -3,14 +3,19 @@ import Foundation
 
 public struct MessageWatcherConfiguration: Sendable, Equatable {
   public var debounceInterval: TimeInterval
+  public var fallbackPollInterval: TimeInterval?
   public var batchLimit: Int
   /// When true, reaction events (tapback add/remove) are included in the stream
   public var includeReactions: Bool
 
   public init(
-    debounceInterval: TimeInterval = 0.25, batchLimit: Int = 100, includeReactions: Bool = false
+    debounceInterval: TimeInterval = 0.25,
+    fallbackPollInterval: TimeInterval? = 5,
+    batchLimit: Int = 100,
+    includeReactions: Bool = false
   ) {
     self.debounceInterval = debounceInterval
+    self.fallbackPollInterval = fallbackPollInterval
     self.batchLimit = batchLimit
     self.includeReactions = includeReactions
   }
@@ -54,6 +59,7 @@ private final class WatchState: @unchecked Sendable {
   private var cursor: Int64
   private var sources: [DispatchSourceFileSystemObject] = []
   private var pending = false
+  private var stopped = false
 
   init(
     store: MessageStore,
@@ -88,10 +94,14 @@ private final class WatchState: @unchecked Sendable {
       }
     }
 
+    queue.async {
+      self.scheduleFallbackPoll()
+    }
   }
 
   func stop() {
     queue.async {
+      self.stopped = true
       for source in self.sources {
         source.cancel()
       }
@@ -118,17 +128,29 @@ private final class WatchState: @unchecked Sendable {
   }
 
   private func schedulePoll() {
+    if stopped { return }
     if pending { return }
     pending = true
     let delay = configuration.debounceInterval
     queue.asyncAfter(deadline: .now() + delay) { [weak self] in
       guard let self else { return }
+      if self.stopped { return }
       self.pending = false
       self.poll()
     }
   }
 
+  private func scheduleFallbackPoll() {
+    guard let interval = configuration.fallbackPollInterval, interval > 0 else { return }
+    queue.asyncAfter(deadline: .now() + interval) { [weak self] in
+      guard let self, !self.stopped else { return }
+      self.poll()
+      self.scheduleFallbackPoll()
+    }
+  }
+
   private func poll() {
+    if stopped { return }
     do {
       let messages = try store.messagesAfter(
         afterRowID: cursor,

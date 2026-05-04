@@ -46,7 +46,9 @@ Notifications:
 
 The RPC default debounce is intentionally higher than the CLI default so macOS
 has time to settle follow-up writes such as `is_from_me` updates on outbound
-messages. Clients that need lower latency can pass `debounce_ms`.
+messages. Clients that need lower latency can pass `debounce_ms`. Watch streams
+also perform a lightweight periodic poll so missed filesystem events or rotated
+SQLite sidecar files do not leave long-running providers silent.
 
 ### `watch.unsubscribe`
 Params:
