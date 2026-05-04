@@ -15,6 +15,9 @@ extension RPCServer {
       let guid = info?.guid ?? ""
       let name = (info?.name.isEmpty == false ? info?.name : nil) ?? chat.name
       let service = info?.service ?? chat.service
+      let contactName =
+        isGroupHandle(identifier: identifier, guid: guid)
+        ? nil : contactResolver.displayName(for: identifier)
       payloads.append(
         chatPayload(
           id: chat.id,
@@ -23,7 +26,8 @@ extension RPCServer {
           name: name,
           service: service,
           lastMessageAt: chat.lastMessageAt,
-          participants: participants
+          participants: participants,
+          contactName: contactName
         ))
     }
 
@@ -54,7 +58,8 @@ extension RPCServer {
         cache: cache,
         message: message,
         includeAttachments: includeAttachments,
-        includeReactions: true
+        includeReactions: true,
+        contactResolver: contactResolver
       )
       payloads.append(payload)
     }
@@ -91,6 +96,7 @@ extension RPCServer {
     let localConfig = config
     let localIncludeAttachments = includeAttachments
     let localIncludeReactions = includeReactions
+    let localContactResolver = contactResolver
     let task = Task {
       do {
         for try await message in localWatcher.stream(
@@ -105,7 +111,8 @@ extension RPCServer {
             cache: localCache,
             message: message,
             includeAttachments: localIncludeAttachments,
-            includeReactions: localIncludeReactions
+            includeReactions: localIncludeReactions,
+            contactResolver: localContactResolver
           )
           localWriter.sendNotification(
             method: "message",
@@ -144,17 +151,32 @@ extension RPCServer {
       throw RPCError.invalidParams("invalid service")
     }
     let region = stringParam(params["region"]) ?? "US"
-
-    let input = ChatTargetInput(
-      recipient: stringParam(params["to"]) ?? "",
+    let rawRecipient = stringParam(params["to"]) ?? ""
+    let rawInput = ChatTargetInput(
+      recipient: rawRecipient,
       chatID: int64Param(params["chat_id"]),
       chatIdentifier: stringParam(params["chat_identifier"]) ?? "",
       chatGUID: stringParam(params["chat_guid"]) ?? ""
     )
     try ChatTargetResolver.validateRecipientRequirements(
-      input: input,
+      input: rawInput,
       mixedTargetError: RPCError.invalidParams("use to or chat_*; not both"),
       missingRecipientError: RPCError.invalidParams("to is required for direct sends")
+    )
+    let recipient: String
+    do {
+      recipient =
+        rawInput.hasChatTarget || rawRecipient.isEmpty
+        ? rawRecipient
+        : try ChatTargetResolver.resolveRecipientName(rawRecipient, contacts: contactResolver)
+    } catch {
+      throw RPCError.invalidParams(error.localizedDescription)
+    }
+    let input = ChatTargetInput(
+      recipient: recipient,
+      chatID: rawInput.chatID,
+      chatIdentifier: rawInput.chatIdentifier,
+      chatGUID: rawInput.chatGUID
     )
 
     if text.isEmpty && file.isEmpty {
@@ -213,7 +235,8 @@ func buildMessagePayload(
   includeAttachments: Bool,
   includeReactions: Bool,
   prefetchedAttachments: [AttachmentMeta]? = nil,
-  prefetchedReactions: [Reaction]? = nil
+  prefetchedReactions: [Reaction]? = nil,
+  contactResolver: any ContactResolving = NoOpContactResolver()
 ) async throws -> [String: Any] {
   let chatInfo = try await cache.info(chatID: message.chatID)
   let participants = try await cache.participants(chatID: message.chatID)
@@ -229,11 +252,20 @@ func buildMessagePayload(
   } else {
     reactions = []
   }
+  let senderName = message.isFromMe ? nil : contactResolver.displayName(for: message.sender)
+  var reactionSenderNames: [Int64: String] = [:]
+  for reaction in reactions where !reaction.isFromMe {
+    if let name = contactResolver.displayName(for: reaction.sender) {
+      reactionSenderNames[reaction.rowID] = name
+    }
+  }
   return try messagePayload(
     message: message,
     chatInfo: chatInfo,
     participants: participants,
     attachments: attachments,
-    reactions: reactions
+    reactions: reactions,
+    senderName: senderName,
+    reactionSenderNames: reactionSenderNames
   )
 }

@@ -46,20 +46,38 @@ enum SendCommand {
         Int64?,
         Date
       ) async throws -> Message? = SentMessageVerifier.resolveSentMessage,
-    storeFactory: @escaping (String) throws -> MessageStore = { try MessageStore(path: $0) }
+    storeFactory: @escaping (String) throws -> MessageStore = { try MessageStore(path: $0) },
+    contactResolverFactory: @escaping (String) async -> any ContactResolving = { region in
+      await ContactResolver.create(region: region)
+    }
   ) async throws {
     let dbPath = values.option("db") ?? MessageStore.defaultPath
     let store = try storeFactory(dbPath)
-    let input = ChatTargetInput(
-      recipient: values.option("to") ?? "",
+    let region = values.option("region") ?? "US"
+    let rawRecipient = values.option("to") ?? ""
+    let rawInput = ChatTargetInput(
+      recipient: rawRecipient,
       chatID: values.optionInt64("chatID"),
       chatIdentifier: values.option("chatIdentifier") ?? "",
       chatGUID: values.option("chatGUID") ?? ""
     )
     try ChatTargetResolver.validateRecipientRequirements(
-      input: input,
+      input: rawInput,
       mixedTargetError: ParsedValuesError.invalidOption("to"),
       missingRecipientError: ParsedValuesError.missingOption("to")
+    )
+    let recipient: String
+    if !rawInput.hasChatTarget && ChatTargetResolver.looksLikeContactName(rawRecipient) {
+      let contacts = await contactResolverFactory(region)
+      recipient = try ChatTargetResolver.resolveRecipientName(rawRecipient, contacts: contacts)
+    } else {
+      recipient = rawRecipient
+    }
+    let input = ChatTargetInput(
+      recipient: recipient,
+      chatID: rawInput.chatID,
+      chatIdentifier: rawInput.chatIdentifier,
+      chatGUID: rawInput.chatGUID
     )
 
     let text = values.option("text") ?? ""
@@ -71,7 +89,6 @@ enum SendCommand {
     guard let service = MessageService(rawValue: serviceRaw) else {
       throw IMsgError.invalidService(serviceRaw)
     }
-    let region = values.option("region") ?? "US"
 
     let resolvedTarget = try await ChatTargetResolver.resolveChatTarget(
       input: input,

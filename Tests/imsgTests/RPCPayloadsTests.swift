@@ -30,6 +30,21 @@ func chatPayloadIncludesParticipantsAndGroupFlag() {
 }
 
 @Test
+func chatPayloadIncludesContactName() {
+  let payload = chatPayload(
+    id: 2,
+    identifier: "+15551234567",
+    guid: "iMessage;-;+15551234567",
+    name: "+15551234567",
+    service: "iMessage",
+    lastMessageAt: Date(timeIntervalSince1970: 0),
+    participants: ["+15551234567"],
+    contactName: "Alice"
+  )
+  #expect(payload["contact_name"] as? String == "Alice")
+}
+
+@Test
 func messagePayloadIncludesChatFields() throws {
   let message = Message(
     rowID: 5,
@@ -90,6 +105,42 @@ func messagePayloadIncludesChatFields() throws {
   #expect(
     (payload["reactions"] as? [[String: Any]])?.first?["emoji"] as? String
       == ReactionType.like.emoji)
+}
+
+@Test
+func messagePayloadIncludesSenderAndReactionNames() throws {
+  let message = Message(
+    rowID: 7,
+    chatID: 10,
+    sender: "+123",
+    text: "hello",
+    date: Date(timeIntervalSince1970: 1),
+    isFromMe: false,
+    service: "iMessage",
+    handleID: nil,
+    attachmentsCount: 0,
+    guid: "msg-guid-7"
+  )
+  let reaction = Reaction(
+    rowID: 101,
+    reactionType: .love,
+    sender: "+456",
+    isFromMe: false,
+    date: Date(timeIntervalSince1970: 2),
+    associatedMessageID: 7
+  )
+  let payload = try messagePayload(
+    message: message,
+    chatInfo: nil,
+    participants: [],
+    attachments: [],
+    reactions: [reaction],
+    senderName: "Alice",
+    reactionSenderNames: [101: "Bob"]
+  )
+  #expect(payload["sender_name"] as? String == "Alice")
+  let reactions = payload["reactions"] as? [[String: Any]]
+  #expect(reactions?.first?["sender_name"] as? String == "Bob")
 }
 
 @Test

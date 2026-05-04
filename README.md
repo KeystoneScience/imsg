@@ -11,12 +11,14 @@ A macOS Messages.app CLI to send, read, and stream iMessage/SMS (with attachment
 - Filters: participants, start/end time, JSON output for tooling.
 - Read-only DB access (`mode=ro`), no DB writes.
 - Event-driven watch via filesystem events, with a fallback poll for missed file events.
+- Optional Contacts integration resolves phone numbers and emails to names.
 - Optional advanced IMCore features (`typing`, `launch`, `status`) behind explicit SIP-off setup.
 
 ## Requirements
 - macOS 14+ with Messages.app signed in.
 - Full Disk Access for your terminal to read `~/Library/Messages/chat.db`.
 - Automation permission for your terminal to control Messages.app (for sending).
+- Contacts permission is optional; without it, raw phone numbers/emails are shown.
 - For SMS relay, enable “Text Message Forwarding” on your iPhone to this Mac.
 
 ## Install
@@ -39,7 +41,7 @@ make build
 - `imsg group --chat-id <id> [--json]` — show identity and participants for one chat.
 - `imsg history --chat-id <id> [--limit 50] [--attachments] [--participants +15551234567,...] [--start 2025-01-01T00:00:00Z] [--end 2025-02-01T00:00:00Z] [--json]`
 - `imsg watch [--chat-id <id>] [--since-rowid <n>] [--debounce 250ms] [--attachments] [--reactions] [--participants …] [--start …] [--end …] [--json]`
-- `imsg send --to <handle> [--text "hi"] [--file /path/file] [--service imessage|sms|auto] [--region US]`
+- `imsg send --to <handle-or-contact-name> [--text "hi"] [--file /path/file] [--service imessage|sms|auto] [--region US]`
 - `imsg react --chat-id <id> --reaction love|like|dislike|laugh|emphasis|question`
 - `imsg read --to <handle> [--chat-id <id> | --chat-identifier <id> | --chat-guid <guid>]`
 - `imsg typing --to <handle> [--duration 5s] [--stop true] [--service imessage|sms|auto]`
@@ -108,8 +110,8 @@ the calling terminal or parent app; Automation permission is only needed for
 send/read/typing/reaction commands that control Messages.app.
 
 ## JSON output
-`imsg chats --json` emits one JSON object per chat with fields: `id`, `name`, `identifier`, `service`, `last_message_at`, `guid`, `display_name`, `is_group`, `participants`.
-`imsg history --json` and `imsg watch --json` emit one JSON object per message with fields: `id`, `chat_id`, `chat_identifier`, `chat_guid`, `chat_name`, `participants`, `is_group`, `guid`, `reply_to_guid`, `destination_caller_id`, `sender`, `is_from_me`, `text`, `created_at`, `attachments` (array of metadata with `filename`, `transfer_name`, `uti`, `mime_type`, `total_bytes`, `is_sticker`, `original_path`, `missing`), `reactions`.
+`imsg chats --json` emits one JSON object per chat with fields: `id`, `name`, `identifier`, `service`, `last_message_at`, `guid`, `display_name`, `contact_name`, `is_group`, `participants`.
+`imsg history --json` and `imsg watch --json` emit one JSON object per message with fields: `id`, `chat_id`, `chat_identifier`, `chat_guid`, `chat_name`, `participants`, `is_group`, `guid`, `reply_to_guid`, `destination_caller_id`, `sender`, `sender_name`, `is_from_me`, `text`, `created_at`, `attachments` (array of metadata with `filename`, `transfer_name`, `uti`, `mime_type`, `total_bytes`, `is_sticker`, `original_path`, `missing`), `reactions`.
 When `watch --reactions --json` sees a tapback event, the message object also includes `is_reaction`, `reaction_type`, `reaction_emoji`, `is_reaction_add`, and `reacted_to_guid`.
 
 Note: `reply_to_guid`, `destination_caller_id`, and `reactions` are read-only metadata.

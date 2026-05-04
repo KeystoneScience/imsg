@@ -46,7 +46,8 @@ private func int64Value(_ value: Any?) -> Int64? {
 func rpcChatsListReturnsChatPayload() async throws {
   let store = try CommandTestDatabase.makeStoreForRPC()
   let output = TestRPCOutput()
-  let server = RPCServer(store: store, verbose: false, output: output)
+  let resolver = MockContactResolver(names: ["iMessage;+;chat123": "Family"])
+  let server = RPCServer(store: store, verbose: false, output: output, contactResolver: resolver)
 
   let line = #"{"jsonrpc":"2.0","id":"1","method":"chats.list","params":{"limit":10}}"#
   await server.handleLineForTesting(line)
@@ -59,6 +60,7 @@ func rpcChatsListReturnsChatPayload() async throws {
   #expect(int64Value(chat["id"]) == 1)
   #expect(chat["identifier"] as? String == "iMessage;+;chat123")
   #expect(chat["is_group"] as? Bool == true)
+  #expect(chat["contact_name"] == nil)
   #expect((chat["participants"] as? [String])?.count == 2)
 }
 
@@ -101,6 +103,49 @@ func rpcSendResolvesChatID() async throws {
   #expect(captured?.chatGUID == "iMessage;+;chat123")
   #expect(captured?.recipient.isEmpty == true)
   #expect(output.responses.first?["result"] as? [String: Any] != nil)
+}
+
+@Test
+func rpcSendResolvesUniqueContactName() async throws {
+  let store = try CommandTestDatabase.makeStoreForRPC()
+  let output = TestRPCOutput()
+  let resolver = MockContactResolver(
+    matches: [ContactMatch(name: "Alice Smith", handle: "+15551234567")]
+  )
+  var captured: MessageSendOptions?
+  let server = RPCServer(
+    store: store,
+    verbose: false,
+    output: output,
+    sendMessage: { options in captured = options },
+    resolveSentMessage: { _, _, _, _ in nil },
+    contactResolver: resolver
+  )
+
+  let line = #"{"jsonrpc":"2.0","id":"3n","method":"send","params":{"to":"Alice","text":"yo"}}"#
+  await server.handleLineForTesting(line)
+
+  #expect(captured?.recipient == "+15551234567")
+  #expect(output.responses.first?["result"] as? [String: Any] != nil)
+}
+
+@Test
+func rpcSendRejectsAmbiguousContactName() async throws {
+  let store = try CommandTestDatabase.makeStoreForRPC()
+  let output = TestRPCOutput()
+  let resolver = MockContactResolver(
+    matches: [
+      ContactMatch(name: "John Smith", handle: "+15551234567"),
+      ContactMatch(name: "John Doe", handle: "+15557654321"),
+    ]
+  )
+  let server = RPCServer(store: store, verbose: false, output: output, contactResolver: resolver)
+
+  let line = #"{"jsonrpc":"2.0","id":"3m","method":"send","params":{"to":"John","text":"yo"}}"#
+  await server.handleLineForTesting(line)
+
+  let error = output.errors.first?["error"] as? [String: Any]
+  #expect(int64Value(error?["code"]) == -32602)
 }
 
 @Test

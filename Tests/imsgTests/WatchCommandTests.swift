@@ -73,6 +73,7 @@ func watchCommandRunsWithStubStream() async throws {
       values: values,
       runtime: runtime,
       storeFactory: { _ in store },
+      contactResolverFactory: { NoOpContactResolver() },
       streamProvider: singleMessageStreamProvider(message)
     )
   }
@@ -103,6 +104,7 @@ func watchCommandRunsWithJsonOutput() async throws {
       values: values,
       runtime: runtime,
       storeFactory: { _ in store },
+      contactResolverFactory: { NoOpContactResolver() },
       streamProvider: singleMessageStreamProvider(message)
     )
   }
@@ -139,6 +141,7 @@ func watchCommandJsonReportsDirectChatMetadata() async throws {
       values: values,
       runtime: runtime,
       storeFactory: { _ in store },
+      contactResolverFactory: { NoOpContactResolver() },
       streamProvider: singleMessageStreamProvider(message)
     )
   }
@@ -182,6 +185,7 @@ func watchCommandFlushesPlainOutput() async throws {
       values: values,
       runtime: runtime,
       storeFactory: { _ in store },
+      contactResolverFactory: { NoOpContactResolver() },
       streamProvider: singleMessageStreamProvider(message)
     )
   }
@@ -214,6 +218,7 @@ func watchCommandFlushesJsonOutput() async throws {
       values: values,
       runtime: runtime,
       storeFactory: { _ in store },
+      contactResolverFactory: { NoOpContactResolver() },
       streamProvider: singleMessageStreamProvider(message)
     )
   }

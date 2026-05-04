@@ -9,10 +9,13 @@ struct ChatPayload: Codable {
   let lastMessageAt: String
   let guid: String?
   let displayName: String?
+  let contactName: String?
   let isGroup: Bool
   let participants: [String]?
 
-  init(chat: Chat, chatInfo: ChatInfo? = nil, participants: [String]? = nil) {
+  init(
+    chat: Chat, chatInfo: ChatInfo? = nil, participants: [String]? = nil, contactName: String? = nil
+  ) {
     let identifier = chatInfo?.identifier ?? chat.identifier
     let guid = chatInfo?.guid ?? ""
     self.id = chat.id
@@ -22,6 +25,7 @@ struct ChatPayload: Codable {
     self.lastMessageAt = CLIISO8601.format(chat.lastMessageAt)
     self.guid = guid.isEmpty ? nil : guid
     self.displayName = chatInfo?.name
+    self.contactName = contactName
     self.isGroup = isGroupHandle(identifier: identifier, guid: guid)
     self.participants = participants
   }
@@ -34,6 +38,7 @@ struct ChatPayload: Codable {
     case lastMessageAt = "last_message_at"
     case guid
     case displayName = "display_name"
+    case contactName = "contact_name"
     case isGroup = "is_group"
     case participants
   }
@@ -46,6 +51,7 @@ struct MessagePayload: Codable {
   let replyToGUID: String?
   let threadOriginatorGUID: String?
   let sender: String
+  let senderName: String?
   let isFromMe: Bool
   let text: String
   let createdAt: String
@@ -63,18 +69,27 @@ struct MessagePayload: Codable {
   let isReactionAdd: Bool?
   let reactedToGUID: String?
 
-  init(message: Message, attachments: [AttachmentMeta], reactions: [Reaction] = []) {
+  init(
+    message: Message,
+    attachments: [AttachmentMeta],
+    reactions: [Reaction] = [],
+    senderName: String? = nil,
+    reactionSenderNames: [Int64: String] = [:]
+  ) {
     self.id = message.rowID
     self.chatID = message.chatID
     self.guid = message.guid
     self.replyToGUID = message.replyToGUID
     self.threadOriginatorGUID = message.threadOriginatorGUID
     self.sender = message.sender
+    self.senderName = senderName
     self.isFromMe = message.isFromMe
     self.text = message.text
     self.createdAt = CLIISO8601.format(message.date)
     self.attachments = attachments.map { AttachmentPayload(meta: $0) }
-    self.reactions = reactions.map { ReactionPayload(reaction: $0) }
+    self.reactions = reactions.map {
+      ReactionPayload(reaction: $0, senderName: reactionSenderNames[$0.rowID])
+    }
     self.destinationCallerID = message.destinationCallerID
 
     // Reaction event metadata
@@ -100,6 +115,7 @@ struct MessagePayload: Codable {
     case replyToGUID = "reply_to_guid"
     case threadOriginatorGUID = "thread_originator_guid"
     case sender
+    case senderName = "sender_name"
     case isFromMe = "is_from_me"
     case text
     case createdAt = "created_at"
@@ -131,14 +147,16 @@ struct ReactionPayload: Codable {
   let type: String
   let emoji: String
   let sender: String
+  let senderName: String?
   let isFromMe: Bool
   let createdAt: String
 
-  init(reaction: Reaction) {
+  init(reaction: Reaction, senderName: String? = nil) {
     self.id = reaction.rowID
     self.type = reaction.reactionType.name
     self.emoji = reaction.reactionType.emoji
     self.sender = reaction.sender
+    self.senderName = senderName
     self.isFromMe = reaction.isFromMe
     self.createdAt = CLIISO8601.format(reaction.date)
   }
@@ -148,6 +166,7 @@ struct ReactionPayload: Codable {
     case type
     case emoji
     case sender
+    case senderName = "sender_name"
     case isFromMe = "is_from_me"
     case createdAt = "created_at"
   }

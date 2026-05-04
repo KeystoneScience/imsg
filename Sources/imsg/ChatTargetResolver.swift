@@ -1,3 +1,4 @@
+import Foundation
 import IMsgCore
 
 struct ChatTargetInput: Sendable {
@@ -68,5 +69,39 @@ enum ChatTargetResolver {
     }
     let prefix = service == .sms ? "SMS" : "iMessage"
     return "\(prefix);-;\(recipient)"
+  }
+
+  static func looksLikeContactName(_ recipient: String) -> Bool {
+    let trimmed = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty { return false }
+    if trimmed.contains("@") { return false }
+    if trimmed.hasPrefix("+") { return false }
+    let phoneCharacters = CharacterSet(charactersIn: "0123456789-(). ")
+    if trimmed.unicodeScalars.allSatisfy({ phoneCharacters.contains($0) }) {
+      return false
+    }
+    return true
+  }
+
+  static func resolveRecipientName(
+    _ recipient: String,
+    contacts: any ContactResolving
+  ) throws -> String {
+    guard looksLikeContactName(recipient) else { return recipient }
+    let matches = contacts.searchByName(recipient)
+    switch matches.count {
+    case 0:
+      return recipient
+    case 1:
+      return matches[0].handle
+    default:
+      let details =
+        matches
+        .map { "  \($0.name): \($0.handle)" }
+        .joined(separator: "\n")
+      throw IMsgError.invalidChatTarget(
+        "Multiple contacts match \"\(recipient)\":\n\(details)\nSpecify a phone number or email instead."
+      )
+    }
   }
 }

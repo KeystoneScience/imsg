@@ -46,6 +46,9 @@ enum WatchCommand {
     values: ParsedValues,
     runtime: RuntimeOptions,
     storeFactory: @escaping (String) throws -> MessageStore = { try MessageStore(path: $0) },
+    contactResolverFactory: @escaping () async -> any ContactResolving = {
+      await ContactResolver.create()
+    },
     streamProvider:
       @escaping (
         MessageWatcher,
@@ -77,6 +80,7 @@ enum WatchCommand {
     let store = try storeFactory(dbPath)
     let watcher = MessageWatcher(store: store)
     let cache = ChatCache(store: store)
+    let contacts = await contactResolverFactory()
     let config = MessageWatcherConfiguration(
       debounceInterval: debounceInterval,
       batchLimit: 100,
@@ -94,22 +98,26 @@ enum WatchCommand {
           cache: cache,
           message: message,
           includeAttachments: true,
-          includeReactions: true
+          includeReactions: true,
+          contactResolver: contacts
         )
         try JSONLines.printObject(payload)
         continue
       }
       let direction = message.isFromMe ? "sent" : "recv"
       let timestamp = CLIISO8601.format(message.date)
+      let sender =
+        message.isFromMe
+        ? message.sender : (contacts.displayName(for: message.sender) ?? message.sender)
       if message.isReaction, let reactionType = message.reactionType {
         let action = (message.isReactionAdd ?? true) ? "added" : "removed"
         let targetGUID = message.reactedToGUID ?? "unknown"
         StdoutWriter.writeLine(
-          "\(timestamp) [\(direction)] \(message.sender) \(action) \(reactionType.emoji) reaction to \(targetGUID)"
+          "\(timestamp) [\(direction)] \(sender) \(action) \(reactionType.emoji) reaction to \(targetGUID)"
         )
         continue
       }
-      StdoutWriter.writeLine("\(timestamp) [\(direction)] \(message.sender): \(message.text)")
+      StdoutWriter.writeLine("\(timestamp) [\(direction)] \(sender): \(message.text)")
       if message.attachmentsCount > 0 {
         if showAttachments {
           let metas = try store.attachments(for: message.rowID)

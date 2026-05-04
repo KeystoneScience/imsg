@@ -30,6 +30,16 @@ enum HistoryCommand {
       "imsg history --chat-id 1 --start 2025-01-01T00:00:00Z --json",
     ]
   ) { values, runtime in
+    try await run(values: values, runtime: runtime)
+  }
+
+  static func run(
+    values: ParsedValues,
+    runtime: RuntimeOptions,
+    contactResolverFactory: @escaping () async -> any ContactResolving = {
+      await ContactResolver.create()
+    }
+  ) async throws {
     guard let chatID = values.optionInt64("chatID") else {
       throw ParsedValuesError.missingOption("chat-id")
     }
@@ -47,6 +57,7 @@ enum HistoryCommand {
 
     let store = try MessageStore(path: dbPath)
     let filtered = try store.messages(chatID: chatID, limit: limit, filter: filter)
+    let contacts = await contactResolverFactory()
 
     if runtime.jsonOutput {
       let cache = ChatCache(store: store)
@@ -60,7 +71,8 @@ enum HistoryCommand {
           includeAttachments: true,
           includeReactions: true,
           prefetchedAttachments: attachmentsByMessageID[message.rowID] ?? [],
-          prefetchedReactions: reactionsByMessageID[message.rowID] ?? []
+          prefetchedReactions: reactionsByMessageID[message.rowID] ?? [],
+          contactResolver: contacts
         )
         try JSONLines.printObject(payload)
       }
@@ -70,7 +82,10 @@ enum HistoryCommand {
     for message in filtered {
       let direction = message.isFromMe ? "sent" : "recv"
       let timestamp = CLIISO8601.format(message.date)
-      StdoutWriter.writeLine("\(timestamp) [\(direction)] \(message.sender): \(message.text)")
+      let sender =
+        message.isFromMe
+        ? message.sender : (contacts.displayName(for: message.sender) ?? message.sender)
+      StdoutWriter.writeLine("\(timestamp) [\(direction)] \(sender): \(message.text)")
       if message.attachmentsCount > 0 {
         if showAttachments {
           let metas = try store.attachments(for: message.rowID)
