@@ -42,19 +42,51 @@ enum CommandTestDatabase {
     )
   }
 
+  static func makeStoreForRPCWithReaction() throws -> MessageStore {
+    let db = try Connection(.inMemory)
+    try createSchema(db, includeChatHandleJoin: true, includeReactionColumns: true)
+    try seedRPCChat(db)
+    try db.run("UPDATE message SET guid = 'msg-guid-5' WHERE ROWID = 5")
+    try db.run(
+      """
+      INSERT INTO message(
+        ROWID, handle_id, text, guid, associated_message_guid, associated_message_type,
+        date, is_from_me, service
+      )
+      VALUES (6, 2, '', 'reaction-guid-6', 'p:0/msg-guid-5', 2001, ?, 0, 'iMessage')
+      """,
+      appleEpoch(Date().addingTimeInterval(1))
+    )
+    try db.run("INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, 6)")
+    return try MessageStore(connection: db, path: ":memory:")
+  }
+
   private static func makeDatabasePath() throws -> String {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     return dir.appendingPathComponent("chat.db").path
   }
 
-  private static func createSchema(_ db: Connection, includeChatHandleJoin: Bool) throws {
+  private static func createSchema(
+    _ db: Connection,
+    includeChatHandleJoin: Bool,
+    includeReactionColumns: Bool = false
+  ) throws {
+    let reactionColumns =
+      includeReactionColumns
+      ? [
+        "guid TEXT",
+        "associated_message_guid TEXT",
+        "associated_message_type INTEGER",
+      ].joined(separator: ",\n") + ","
+      : ""
     try db.execute(
       """
       CREATE TABLE message (
         ROWID INTEGER PRIMARY KEY,
         handle_id INTEGER,
         text TEXT,
+        \(reactionColumns)
         date INTEGER,
         is_from_me INTEGER,
         service TEXT

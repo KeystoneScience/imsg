@@ -53,7 +53,8 @@ extension RPCServer {
         store: store,
         cache: cache,
         message: message,
-        includeAttachments: includeAttachments
+        includeAttachments: includeAttachments,
+        includeReactions: true
       )
       payloads.append(payload)
     }
@@ -85,6 +86,7 @@ extension RPCServer {
     let localSinceRowID = sinceRowID
     let localConfig = config
     let localIncludeAttachments = includeAttachments
+    let localIncludeReactions = includeReactions
     let task = Task {
       do {
         for try await message in localWatcher.stream(
@@ -98,7 +100,8 @@ extension RPCServer {
             store: localStore,
             cache: localCache,
             message: message,
-            includeAttachments: localIncludeAttachments
+            includeAttachments: localIncludeAttachments,
+            includeReactions: localIncludeReactions
           )
           localWriter.sendNotification(
             method: "message",
@@ -184,12 +187,13 @@ private func buildMessagePayload(
   store: MessageStore,
   cache: ChatCache,
   message: Message,
-  includeAttachments: Bool
+  includeAttachments: Bool,
+  includeReactions: Bool
 ) async throws -> [String: Any] {
   let chatInfo = try await cache.info(chatID: message.chatID)
   let participants = try await cache.participants(chatID: message.chatID)
   let attachments = includeAttachments ? try store.attachments(for: message.rowID) : []
-  let reactions = includeAttachments ? try store.reactions(for: message.rowID) : []
+  let reactions = includeReactions ? try store.reactions(for: message.rowID) : []
   return try messagePayload(
     message: message,
     chatInfo: chatInfo,

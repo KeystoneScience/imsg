@@ -276,6 +276,30 @@ func rpcWatchSubscribeEmitsNotificationAndUnsubscribe() async throws {
 }
 
 @Test
+func rpcWatchIncludeReactionsDoesNotRequireAttachments() async throws {
+  let store = try CommandTestDatabase.makeStoreForRPCWithReaction()
+  let output = TestRPCOutput()
+  let server = RPCServer(store: store, verbose: false, output: output)
+
+  let subscribe =
+    #"{"jsonrpc":"2.0","id":13,"method":"watch.subscribe","params":{"chat_id":1,"#
+    + #""since_rowid":-1,"include_reactions":true,"attachments":false}}"#
+  await server.handleLineForTesting(subscribe)
+
+  for _ in 0..<20 {
+    if output.notifications.count >= 1 { break }
+    try await Task.sleep(nanoseconds: 50_000_000)
+  }
+
+  let params = output.notifications.first?["params"] as? [String: Any]
+  let message = params?["message"] as? [String: Any]
+  let reactions = message?["reactions"] as? [[String: Any]] ?? []
+  #expect(reactions.count == 1)
+  #expect(reactions.first?["type"] as? String == "like")
+  #expect((message?["attachments"] as? [[String: Any]])?.isEmpty == true)
+}
+
+@Test
 func rpcWatchUnsubscribeRequiresSubscription() async throws {
   let store = try CommandTestDatabase.makeStoreForRPC()
   let output = TestRPCOutput()

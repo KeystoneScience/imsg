@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- fix: gate RPC watch reaction metadata on `include_reactions`, not `attachments` (#82)
 - fix: dedupe URL balloon preview duplicates in watch stream without cross-chat/schema regressions (#64, thanks @lesaai)
 - fix: remove non-functional `typing` command and related RPC methods
 - fix: remove unsupported standalone IMCore typing path and stale error branch

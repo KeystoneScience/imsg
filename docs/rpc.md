@@ -37,6 +37,7 @@ Params:
 - `participants` (array, optional)
 - `start` / `end` (ISO8601, optional)
 - `attachments` (bool, default false)
+- `include_reactions` (bool, default false)
 Result:
 - `{ "subscription": 1 }`
 Notifications:
