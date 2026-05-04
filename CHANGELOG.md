@@ -6,6 +6,7 @@
 - fix: keep watch streams alive with a periodic poll fallback when filesystem events are missed (#78)
 - fix: detect Tahoe group-send ghost rows and fail instead of reporting false success (#90, thanks @loop)
 - docs: document standard tapback sending and watch reaction events (#66, thanks @safaaleigh)
+- docs: clarify that `send --file` supports audio/file attachments (#35, thanks @rock19)
 - fix: expose RPC watch debounce and default it to 500ms to reduce outbound echo races (#72, #80)
 - fix: speed up chat listing by using `chat_message_join.message_date` when available (#76, thanks @tmad4000)
 - fix: speed up JSON history metadata lookups by batching attachments and reactions (#81, thanks @kacy)

@@ -39,7 +39,7 @@ make build
 - `imsg group --chat-id <id> [--json]` — show identity and participants for one chat.
 - `imsg history --chat-id <id> [--limit 50] [--attachments] [--participants +15551234567,...] [--start 2025-01-01T00:00:00Z] [--end 2025-02-01T00:00:00Z] [--json]`
 - `imsg watch [--chat-id <id>] [--since-rowid <n>] [--debounce 250ms] [--attachments] [--reactions] [--participants …] [--start …] [--end …] [--json]`
-- `imsg send --to <handle> [--text "hi"] [--file /path/img.jpg] [--service imessage|sms|auto] [--region US]`
+- `imsg send --to <handle> [--text "hi"] [--file /path/file] [--service imessage|sms|auto] [--region US]`
 - `imsg react --chat-id <id> --reaction love|like|dislike|laugh|emphasis|question`
 - `imsg read --to <handle> [--chat-id <id> | --chat-identifier <id> | --chat-guid <guid>]`
 - `imsg typing --to <handle> [--duration 5s] [--stop true] [--service imessage|sms|auto]`
@@ -69,8 +69,8 @@ imsg watch --chat-id 1 --attachments --debounce 250ms
 # stream tapback add/remove events too
 imsg watch --chat-id 1 --reactions --json
 
-# send a picture
-imsg send --to "+14155551212" --text "hi" --file ~/Desktop/pic.jpg --service imessage
+# send a file or audio attachment
+imsg send --to "+14155551212" --text "hi" --file ~/Desktop/voice.m4a --service imessage
 
 # send a standard tapback to the most recent incoming message in a chat
 imsg react --chat-id 1 --reaction like
@@ -90,6 +90,12 @@ imsg typing --to "+14155551212" --duration 5s
 
 ## Attachment notes
 `--attachments` prints per-attachment lines with name, MIME, missing flag, and resolved path (tilde expanded). Only metadata is shown; files aren’t copied.
+
+`imsg send --file` can send regular file attachments, including audio files such as
+`.m4a`, through Messages.app AppleScript. Before handing the file to Messages,
+`imsg` copies it under `~/Library/Messages/Attachments/imsg/` so Messages can
+read it reliably. Sending still requires macOS Automation permission for the
+calling terminal or parent app to control Messages.app.
 
 ## JSON output
 `imsg chats --json` emits one JSON object per chat with fields: `id`, `name`, `identifier`, `service`, `last_message_at`, `guid`, `display_name`, `is_group`, `participants`.
