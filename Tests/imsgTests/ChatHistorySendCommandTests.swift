@@ -139,14 +139,16 @@ func sendCommandRunsWithStubSender() async throws {
   )
   let runtime = RuntimeOptions(parsedValues: values)
   var captured: MessageSendOptions?
-  try await SendCommand.run(
-    values: values,
-    runtime: runtime,
-    sendMessage: { options in
-      captured = options
-    },
-    resolveSentMessage: { _, _, _, _ in nil }
-  )
+  _ = try await StdoutCapture.capture {
+    try await SendCommand.run(
+      values: values,
+      runtime: runtime,
+      sendMessage: { options in
+        captured = options
+      },
+      resolveSentMessage: { _, _, _, _ in nil }
+    )
+  }
   #expect(captured?.recipient == "+15551234567")
   #expect(captured?.text == "hi")
 }
@@ -161,14 +163,16 @@ func sendCommandResolvesChatID() async throws {
   )
   let runtime = RuntimeOptions(parsedValues: values)
   var captured: MessageSendOptions?
-  try await SendCommand.run(
-    values: values,
-    runtime: runtime,
-    sendMessage: { options in
-      captured = options
-    },
-    resolveSentMessage: { _, _, _, _ in nil }
-  )
+  _ = try await StdoutCapture.capture {
+    try await SendCommand.run(
+      values: values,
+      runtime: runtime,
+      sendMessage: { options in
+        captured = options
+      },
+      resolveSentMessage: { _, _, _, _ in nil }
+    )
+  }
   #expect(captured?.chatIdentifier == "+123")
   #expect(captured?.chatGUID == "iMessage;+;chat123")
   #expect(captured?.recipient.isEmpty == true)

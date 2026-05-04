@@ -40,14 +40,16 @@ func reactCommandBuildsParameterizedAppleScriptForStandardTapback() async throws
   let runtime = RuntimeOptions(parsedValues: values)
   var capturedScript = ""
   var capturedArguments: [String] = []
-  try await ReactCommand.run(
-    values: values,
-    runtime: runtime,
-    appleScriptRunner: { source, arguments in
-      capturedScript = source
-      capturedArguments = arguments
-    }
-  )
+  _ = try await StdoutCapture.capture {
+    try await ReactCommand.run(
+      values: values,
+      runtime: runtime,
+      appleScriptRunner: { source, arguments in
+        capturedScript = source
+        capturedArguments = arguments
+      }
+    )
+  }
   #expect(capturedArguments == ["iMessage;+;chat123", "Test Chat", "2"])
   #expect(capturedScript.contains("on run argv"))
   #expect(capturedScript.contains("keystroke \"f\" using command down"))
@@ -68,14 +70,16 @@ func reactCommandBuildsParameterizedAppleScriptForCustomEmoji() async throws {
   let runtime = RuntimeOptions(parsedValues: values)
   var capturedScript = ""
   var capturedArguments: [String] = []
-  try await ReactCommand.run(
-    values: values,
-    runtime: runtime,
-    appleScriptRunner: { source, arguments in
-      capturedScript = source
-      capturedArguments = arguments
-    }
-  )
+  _ = try await StdoutCapture.capture {
+    try await ReactCommand.run(
+      values: values,
+      runtime: runtime,
+      appleScriptRunner: { source, arguments in
+        capturedScript = source
+        capturedArguments = arguments
+      }
+    )
+  }
   #expect(capturedArguments == ["iMessage;+;chat123", "Test Chat", "🎉"])
   #expect(capturedScript.contains("on run argv"))
   #expect(capturedScript.contains("keystroke customEmoji"))
