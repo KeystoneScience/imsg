@@ -5,14 +5,15 @@ description: Use for local iMessage/SMS archive reads, chat history, watch, and 
 
 # imsg
 
-Use this for Messages.app history, chat lookup, streaming, and sends. Reading is local DB access; sending uses Messages automation and must be explicitly requested.
+Use this for Messages.app history, chat lookup, streaming, and sends. Reading is local DB access; sending uses Messages automation and must be explicitly requested. When the Codex plugin is installed, prefer the MCP tools first (`imsg_list_chats`, `imsg_read_messages`, `imsg_search_messages`, `imsg_prepare_send`, `imsg_send_message`, `imsg_prepare_reaction`, `imsg_send_reaction`) because they add bounded reads and write approval gates.
 
 ## Sources
 
 - DB: `~/Library/Messages/chat.db`
-- Repo: `~/Projects/imsg`
+- Repo: `~/Projects/imsg` or the installed plugin checkout
 - CLI: `imsg`
 - JSON output is NDJSON; pipe to `jq -s` for arrays.
+- Codex plugin: `.codex-plugin/plugin.json` plus `.mcp.json` runs `scripts/run_mcp.sh`
 
 ## Read Workflow
 
@@ -38,13 +39,15 @@ Use `--attachments` when attachment metadata matters. Use `--start`/`--end` with
 
 ## Sends
 
-Only send, react, mark read, or show typing when the user explicitly asks. Prefer dry wording in the final confirmation: recipient, service, and what was sent.
+Only send, react, mark read, or show typing when the user explicitly asks. Prefer dry wording in the final confirmation: recipient, service, and what was sent. In the Codex plugin, use `imsg_prepare_send` first, then send only with `ALLOW_IMSG_SEND=1`, `confirm_send=true`, an approval note, and the matching `send_sha256`.
 
 Common send command:
 
 ```bash
 imsg send --to "+15551234567" --text "message" --service auto
 ```
+
+For tapbacks, use `imsg_prepare_reaction` first, then react only with `ALLOW_IMSG_REACT=1`, `confirm_react=true`, an approval note, and the matching `reaction_sha256`.
 
 ## Verification
 

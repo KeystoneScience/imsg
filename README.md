@@ -1,5 +1,19 @@
 # imsg
 
+## Add The Codex Marketplace
+
+Run this in Codex or your terminal on a Mac:
+
+```bash
+# from a local clone
+codex plugin marketplace add /path/to/imsg
+
+# from GitHub after the marketplace manifest is published on main
+codex plugin marketplace add openclaw/imsg --ref main
+```
+
+Then restart Codex, open the plugin picker, and install **imsg** from the new marketplace. Grant Full Disk Access to Codex so the plugin can read Messages.app history. Sending and tapback reactions are disabled by default; only enable them after explicit approval by setting `ALLOW_IMSG_SEND=1` or `ALLOW_IMSG_REACT=1` in the plugin environment.
+
 `imsg` is a macOS command-line tool for Messages.app. It reads your local
 Messages database, streams new iMessage/SMS rows, sends messages through
 Messages.app automation, and exposes the same surfaces over JSON and JSON-RPC.

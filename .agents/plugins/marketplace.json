@@ -1,0 +1,20 @@
+{
+  "name": "imsg",
+  "interface": {
+    "displayName": "imsg"
+  },
+  "plugins": [
+    {
+      "name": "imsg",
+      "source": {
+        "source": "url",
+        "url": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
