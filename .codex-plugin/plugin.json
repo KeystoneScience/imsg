@@ -40,6 +40,8 @@
       "Check imsg permissions and explain what is missing"
     ],
     "brandColor": "#34C759",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png",
     "screenshots": [
       "docs/assets/mac-message-codex-plugin.png"
     ]
