@@ -18,13 +18,18 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - Python 3.8 fallback only.
+    ZoneInfo = None  # type: ignore[assignment]
+
 
 SERVER_NAME = "imsg"
-SERVER_VERSION = "0.6.0"
+SERVER_VERSION = "0.6.1"
 ROOT = Path(__file__).resolve().parents[1]
 MESSAGES_DB = Path.home() / "Library" / "Messages" / "chat.db"
 ADDRESSBOOK_ROOT = Path.home() / "Library" / "Application Support" / "AddressBook"
@@ -61,7 +66,11 @@ _CONTACT_INDEX: dict[str, Any] | None = None
 
 
 def json_text(payload: Any) -> dict[str, Any]:
-    return {"content": [{"type": "text", "text": json.dumps(payload, indent=2, default=str)}]}
+    if os.environ.get("IMSG_MCP_PRETTY_JSON"):
+        text = json.dumps(payload, indent=2, default=str)
+    else:
+        text = json.dumps(payload, separators=(",", ":"), default=str)
+    return {"content": [{"type": "text", "text": text}]}
 
 
 def error_text(message: str) -> dict[str, Any]:
@@ -410,12 +419,12 @@ def command_candidate() -> tuple[list[str] | None, str, bool]:
     for build_bin in (ROOT / ".build" / "release" / "imsg", ROOT / ".build" / "debug" / "imsg"):
         if build_bin.exists() and os.access(build_bin, os.X_OK):
             return [str(build_bin)], str(build_bin), False
-    swift = shutil.which("swift")
-    if swift:
-        return [swift, "run", "--package-path", str(ROOT), "imsg"], f"{swift} run --package-path {ROOT} imsg", True
     path_bin = shutil.which("imsg")
     if path_bin:
         return [path_bin], path_bin, False
+    swift = shutil.which("swift")
+    if swift:
+        return [swift, "run", "--package-path", str(ROOT), "imsg"], f"{swift} run --package-path {ROOT} imsg", True
     return None, "not found", False
 
 
@@ -609,14 +618,69 @@ def search_messages(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def require_iso_window(args: dict[str, Any]) -> tuple[str, str]:
+def local_timezone(raw: Any) -> timezone:
+    value = str(raw or os.environ.get("TZ") or "").strip()
+    if value and ZoneInfo is not None:
+        try:
+            return ZoneInfo(value)  # type: ignore[return-value,misc]
+        except Exception as exc:
+            raise ToolError(f"timezone is not valid: {value}") from exc
+    return datetime.now().astimezone().tzinfo or timezone.utc
+
+
+def utc_iso(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def parse_iso_datetime(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def require_iso_window(args: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
     start = str(args.get("start") or "").strip()
     end = str(args.get("end") or "").strip()
-    if not start:
-        raise ToolError("start is required")
-    if not end:
-        raise ToolError("end is required")
-    return start, end
+    if start or end:
+        if not start:
+            raise ToolError("start is required when end is provided")
+        if not end:
+            raise ToolError("end is required when start is provided")
+        return start, end, {"window_input": "explicit"}
+
+    tz = local_timezone(args.get("timezone"))
+    preset = str(args.get("preset") or "").strip().lower()
+    raw_day = str(args.get("day") or args.get("local_date") or "").strip()
+    if preset:
+        today = datetime.now(tz).date()
+        if preset == "today":
+            day = today
+        elif preset == "yesterday":
+            day = today - timedelta(days=1)
+        else:
+            raise ToolError("preset must be today or yesterday")
+    elif raw_day:
+        try:
+            day = datetime.strptime(raw_day, "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise ToolError("day must be YYYY-MM-DD") from exc
+    else:
+        raise ToolError("Provide start/end, day, local_date, or preset.")
+
+    local_start = datetime(day.year, day.month, day.day, tzinfo=tz)
+    local_end = local_start + timedelta(days=1)
+    return utc_iso(local_start), utc_iso(local_end), {
+        "window_input": "local_day" if not preset else f"preset:{preset}",
+        "day": day.isoformat(),
+        "timezone": str(tz),
+    }
 
 
 def truncate_text(text: str, max_chars: int) -> tuple[str, bool]:
@@ -625,11 +689,73 @@ def truncate_text(text: str, max_chars: int) -> tuple[str, bool]:
     return text[:max_chars], True
 
 
+def line_time(value: Any, tz: timezone) -> str:
+    parsed = parse_iso_datetime(value)
+    if not parsed:
+        return str(value or "")
+    return parsed.astimezone(tz).strftime("%H:%M")
+
+
+def display_name_for_conversation(conversation: dict[str, Any], participant_names: dict[str, str]) -> str:
+    raw_name = str(conversation.get("chat_name") or "").strip()
+    participants = [str(item) for item in conversation.get("participants") or []]
+    if not conversation.get("is_group") and participants:
+        participant = participants[0]
+        resolved = participant_names.get(participant)
+        chat_identifier = str(conversation.get("chat_identifier") or "").strip()
+        chat_guid = str(conversation.get("chat_guid") or "").strip()
+        raw_looks_like_handle = "@" in raw_name or len(phone_digits(raw_name)) >= 7
+        if resolved and (
+            not raw_name
+            or raw_name == participant
+            or raw_name == chat_identifier
+            or raw_name == chat_guid
+            or raw_looks_like_handle
+        ):
+            return resolved
+        return raw_name or resolved or participant
+    if raw_name:
+        return raw_name
+    if participant_names:
+        names = [participant_names.get(handle) or handle for handle in participants]
+        label = ", ".join(names[:4])
+        if len(names) > 4:
+            label += f" +{len(names) - 4}"
+        return label
+    return (
+        str(conversation.get("chat_identifier") or "")
+        or str(conversation.get("chat_guid") or "")
+        or str(conversation.get("chat_id") or "unknown")
+    )
+
+
+def truncate_with_budget(text: str, max_chars: int, remaining_budget: int) -> tuple[str, bool, int]:
+    allowed = max(0, min(max_chars, remaining_budget))
+    if allowed <= 0:
+        return "", bool(text), 0
+    rendered, truncated = truncate_text(text, allowed)
+    return rendered, truncated, len(rendered)
+
+
 def sent_summary(args: dict[str, Any]) -> dict[str, Any]:
-    start, end = require_iso_window(args)
+    start, end, window_meta = require_iso_window(args)
+    mode = str(args.get("output_mode") or "brief").strip().lower()
+    if mode not in {"brief", "full", "counts"}:
+        raise ToolError("output_mode must be brief, full, or counts")
     limit = clamp_int(args.get("limit"), default=1000, maximum=5000)
-    max_text_chars = clamp_int(args.get("max_text_chars"), default=2000, maximum=20000)
-    include_text = args.get("include_text") is not False
+    max_text_chars = clamp_int(
+        args.get("max_text_chars"),
+        default=280 if mode == "brief" else 2000,
+        maximum=20000,
+    )
+    max_total_text_chars = clamp_int(args.get("max_total_text_chars"), default=12000, maximum=100000)
+    max_messages_per_conversation = clamp_int(
+        args.get("max_messages_per_conversation"),
+        default=25 if mode == "brief" else 500,
+        maximum=500,
+    )
+    include_text = mode != "counts" and args.get("include_text") is not False
+    command_limit = limit + 1
     command = [
         "report",
         *base_args(args),
@@ -640,68 +766,133 @@ def sent_summary(args: dict[str, Any]) -> dict[str, Any]:
         "--end",
         end,
         "--limit",
-        str(limit),
+        str(command_limit),
         "--json",
     ]
+    if not include_text:
+        command.append("--no-text")
     participants = string_list(args.get("participants"))
     if participants:
         command += ["--participants", ",".join(participants)]
-    rows = [enrich_message(row) for row in parse_ndjson(run_imsg(command, timeout=180))]
+    raw_rows = parse_ndjson(run_imsg(command, timeout=180))
+    truncated_by_limit = len(raw_rows) > limit
+    rows = raw_rows[:limit]
 
     conversations: dict[str, dict[str, Any]] = {}
+    total_text_used = 0
+    output_tz = local_timezone(args.get("timezone"))
     for message in rows:
         chat_id = str(message.get("chat_id") or "")
         key = chat_id or str(message.get("chat_guid") or message.get("chat_identifier") or "unknown")
         text = str(message.get("text") or "")
-        rendered_text, truncated = truncate_text(text, max_text_chars)
         convo = conversations.setdefault(
             key,
             {
                 "chat_id": message.get("chat_id"),
                 "chat_identifier": message.get("chat_identifier"),
                 "chat_guid": message.get("chat_guid"),
-                "chat_display_name": message.get("chat_display_name") or message.get("chat_name") or key,
+                "chat_name": message.get("chat_name") or "",
                 "is_group": bool(message.get("is_group")),
                 "participants": message.get("participants") or [],
-                "participant_names": message.get("participant_names") or {},
                 "message_count": 0,
                 "text_chars": 0,
                 "first_at": message.get("created_at"),
                 "last_at": message.get("created_at"),
+                "omitted_messages": 0,
+                "truncated_chars": 0,
                 "messages": [],
+                "lines": [],
             },
         )
         convo["message_count"] += 1
         convo["text_chars"] += len(text)
         convo["last_at"] = message.get("created_at") or convo["last_at"]
-        if message.get("participant_names"):
-            convo["participant_names"].update(message["participant_names"])
-        item = {
-            "id": message.get("id"),
-            "guid": message.get("guid"),
-            "created_at": message.get("created_at"),
-            "sender_display_name": message.get("sender_display_name"),
-            "text_chars": len(text),
-            "text_truncated": truncated,
-        }
-        if include_text:
-            item["text"] = rendered_text
-        convo["messages"].append(item)
+        if not include_text:
+            continue
+        emitted_count = len(convo["messages"]) if mode == "full" else len(convo["lines"])
+        if emitted_count >= max_messages_per_conversation:
+            convo["omitted_messages"] += 1
+            continue
+        rendered_text, truncated, used = truncate_with_budget(
+            text,
+            max_text_chars,
+            max_total_text_chars - total_text_used,
+        )
+        if not rendered_text:
+            convo["omitted_messages"] += 1
+            continue
+        total_text_used += used
+        if truncated:
+            convo["truncated_chars"] += max(0, len(text) - len(rendered_text))
+        if mode == "full":
+            convo["messages"].append(
+                {
+                    "id": message.get("id"),
+                    "guid": message.get("guid"),
+                    "created_at": message.get("created_at"),
+                    "sender_display_name": "Me",
+                    "text_chars": len(text),
+                    "text_truncated": truncated,
+                    "text": rendered_text,
+                }
+            )
+        else:
+            prefix = line_time(message.get("created_at"), output_tz)
+            convo["lines"].append(f"{prefix} {rendered_text}".strip())
 
     grouped = sorted(
         conversations.values(),
         key=lambda item: (str(item.get("first_at") or ""), str(item.get("chat_display_name") or "")),
     )
+    compact_conversations = []
+    for convo in grouped:
+        participants = [str(item) for item in convo.get("participants") or []]
+        participant_names = resolve_handles(participants)
+        participants_display = [participant_names.get(handle) or handle for handle in participants]
+        name = display_name_for_conversation(convo, participant_names)
+        base = {
+            "chat_id": convo.get("chat_id"),
+            "name": name,
+            "is_group": convo.get("is_group"),
+            "participants_display": participants_display,
+            "message_count": convo.get("message_count"),
+            "first_at": convo.get("first_at"),
+            "last_at": convo.get("last_at"),
+            "omitted_messages": convo.get("omitted_messages"),
+            "truncated_chars": convo.get("truncated_chars"),
+        }
+        if include_text:
+            base["source_text_chars"] = convo.get("text_chars")
+        if mode == "full":
+            base.update(
+                {
+                    "chat_identifier": convo.get("chat_identifier"),
+                    "chat_guid": convo.get("chat_guid"),
+                    "chat_display_name": name,
+                    "participants": participants,
+                    "participant_names": participant_names,
+                    "messages": convo.get("messages"),
+                }
+            )
+        elif mode == "brief" and include_text:
+            base["lines"] = convo.get("lines")
+        compact_conversations.append(base)
     return {
         "start": start,
         "end": end,
+        **window_meta,
         "direction": "sent",
         "count": len(rows),
-        "conversation_count": len(grouped),
+        "conversation_count": len(compact_conversations),
         "limit": limit,
-        "truncated_by_limit": len(rows) >= limit,
-        "conversations": grouped,
-        "scope_note": "Bulk report uses one imsg process and decodes attributedBody before grouping across chats.",
+        "truncated_by_limit": truncated_by_limit,
+        "output_mode": mode,
+        "include_text": include_text,
+        "max_text_chars": max_text_chars if include_text else 0,
+        "max_total_text_chars": max_total_text_chars if include_text else 0,
+        "text_chars_returned": total_text_used,
+        "conversations": compact_conversations,
+        "scope_note": "Use this for cross-chat sent-message summaries; it is one imsg process, contact-resolved, grouped, and budgeted for model use.",
     }
 
 
@@ -1026,19 +1217,26 @@ TOOLS: dict[str, dict[str, Any]] = {
         },
     },
     "imsg_sent_summary": {
-        "description": "Bulk-read sent messages across all chats for a date window, grouped by conversation for fast daily summaries.",
+        "description": "Use first for cross-chat questions like 'what did I send yesterday'; one fast grouped sent-message report, not a chat-by-chat loop.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "start": {"type": "string", "description": "Inclusive ISO8601 start timestamp."},
-                "end": {"type": "string", "description": "Exclusive ISO8601 end timestamp."},
+                "start": {"type": "string", "description": "Inclusive ISO8601 start timestamp. Pair with end."},
+                "end": {"type": "string", "description": "Exclusive ISO8601 end timestamp. Pair with start."},
+                "day": {"type": "string", "description": "Local YYYY-MM-DD day. Easier than start/end for daily summaries."},
+                "local_date": {"type": "string", "description": "Alias for day, in YYYY-MM-DD format."},
+                "preset": {"type": "string", "enum": ["today", "yesterday"]},
+                "timezone": {"type": "string", "description": "IANA timezone for day/preset and line times, e.g. America/Denver."},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 5000, "default": 1000},
                 "participants": {"type": "array", "items": {"type": "string"}},
+                "output_mode": {"type": "string", "enum": ["brief", "full", "counts"], "default": "brief"},
                 "include_text": {"type": "boolean", "default": True},
-                "max_text_chars": {"type": "integer", "minimum": 1, "maximum": 20000, "default": 2000},
+                "max_text_chars": {"type": "integer", "minimum": 1, "maximum": 20000, "default": 280},
+                "max_total_text_chars": {"type": "integer", "minimum": 1, "maximum": 100000, "default": 12000},
+                "max_messages_per_conversation": {"type": "integer", "minimum": 1, "maximum": 500, "default": 25},
                 "db": {"type": "string", "description": "Optional alternate chat.db path."},
             },
-            "required": ["start", "end"],
+            "required": [],
             "additionalProperties": False,
         },
         "handler": sent_summary,

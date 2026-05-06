@@ -39,8 +39,8 @@ Messages.app history and local Contacts metadata.
   including contact-resolved names.
 - `imsg_resolve_contacts`: resolve phone numbers, emails, or Messages handles to
   local Contacts names.
-- `imsg_sent_summary`: bulk-read sent messages across all chats for a date
-  window, grouped by conversation for fast daily summaries.
+- `imsg_sent_summary`: bulk-read sent messages across all chats for a day or
+  date window, grouped by conversation with compact model-friendly defaults.
 - `imsg_prepare_send`: inspect a proposed send payload and return the hash
   required before sending.
 - `imsg_send_message`: send only when the payload hash, confirmation flag,
@@ -89,6 +89,7 @@ For SMS, enable Text Message Forwarding on your iPhone for this Mac.
 - "Search my local messages for Sabrina and summarize the latest thread."
 - "Read the latest messages in chat 1292, but do not send anything."
 - "Summarize everything I sent yesterday across all Messages chats."
+- "Summarize what I sent on 2026-05-05, grouped by person."
 - "Prepare a reply to this thread for me to approve."
 - "React with a like to the latest incoming message in this chat."
 - "Check whether the plugin has the permissions it needs."
@@ -117,6 +118,13 @@ Run the full Swift test suite:
 
 ```bash
 make test
+```
+
+For fast cross-chat sent-message analytics, use the report path instead of
+looping through chats:
+
+```bash
+imsg report --direction sent --start 2026-05-05T00:00:00Z --end 2026-05-06T00:00:00Z --no-text --json
 ```
 
 ## Notes

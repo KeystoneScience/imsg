@@ -64,19 +64,29 @@ private struct MessageRowSelection {
   let selectList: String
   let columns: MessageRowColumns
 
-  init(store: MessageStore, includeChatID: Bool, includeBalloonBundleID: Bool = false) {
+  init(
+    store: MessageStore,
+    includeChatID: Bool,
+    includeBalloonBundleID: Bool = false,
+    resolveText: Bool = true,
+    includeAttachmentCount: Bool = true
+  ) {
     let columns = MessageRowColumns.message(chatID: includeChatID ? "chat_id" : nil)
     let schema = store.schema
-    let bodyColumn = schema.hasAttributedBody ? "m.attributedBody" : "NULL"
+    let bodyColumn = resolveText && schema.hasAttributedBody ? "m.attributedBody" : "NULL"
     let guidColumn = schema.hasReactionColumns ? "m.guid" : "NULL"
     let associatedGuidColumn = schema.hasReactionColumns ? "m.associated_message_guid" : "NULL"
     let associatedTypeColumn = schema.hasReactionColumns ? "m.associated_message_type" : "NULL"
     let destinationCallerColumn =
       schema.hasDestinationCallerID ? "m.destination_caller_id" : "NULL"
-    let audioMessageColumn = schema.hasAudioMessageColumn ? "m.is_audio_message" : "0"
+    let audioMessageColumn = resolveText && schema.hasAudioMessageColumn ? "m.is_audio_message" : "0"
     let threadOriginatorColumn =
       schema.hasThreadOriginatorGUIDColumn ? "m.thread_originator_guid" : "NULL"
     let chatColumn = includeChatID ? ", cmj.chat_id AS \(columns.chatID!)" : ""
+    let attachmentCountColumn =
+      includeAttachmentCount
+      ? "(SELECT COUNT(*) FROM message_attachment_join maj WHERE maj.message_id = m.ROWID)"
+      : "0"
 
     var selectList = """
       m.ROWID AS \(columns.rowID)\(chatColumn), m.handle_id AS \(columns.handleID),
@@ -87,7 +97,7 @@ private struct MessageRowSelection {
              \(destinationCallerColumn) AS \(columns.destinationCallerID),
              \(guidColumn) AS \(columns.guid), \(associatedGuidColumn) AS \(columns.associatedGUID),
              \(associatedTypeColumn) AS \(columns.associatedType),
-             (SELECT COUNT(*) FROM message_attachment_join maj WHERE maj.message_id = m.ROWID) AS \(columns.attachments),
+             \(attachmentCountColumn) AS \(columns.attachments),
              \(bodyColumn) AS \(columns.body),
              \(threadOriginatorColumn) AS \(columns.threadOriginatorGUID)
       """
@@ -209,12 +219,16 @@ private struct MessagesWindowQuery {
     limit: Int,
     filter: MessageFilter?,
     isFromMe: Bool?,
-    includeReactions: Bool
+    includeReactions: Bool,
+    resolveText: Bool,
+    includeAttachmentCount: Bool
   ) {
     self.selection = MessageRowSelection(
       store: store,
       includeChatID: true,
-      includeBalloonBundleID: true
+      includeBalloonBundleID: true,
+      resolveText: resolveText,
+      includeAttachmentCount: includeAttachmentCount
     )
     let destinationCallerColumn =
       store.schema.hasDestinationCallerID ? "m.destination_caller_id" : "NULL"
@@ -251,15 +265,31 @@ private struct MessagesWindowQuery {
         let placeholders = Array(repeating: "?", count: filter.participants.count).joined(
           separator: ",")
         sql +=
-          " AND COALESCE(NULLIF(h.id,''), \(destinationCallerColumn)) COLLATE NOCASE IN (\(placeholders))"
+          """
+           AND (
+             COALESCE(NULLIF(h.id,''), \(destinationCallerColumn)) COLLATE NOCASE IN (\(placeholders))
+             OR EXISTS (
+               SELECT 1
+               FROM chat_handle_join chj
+               JOIN handle participant_handle ON participant_handle.ROWID = chj.handle_id
+               WHERE chj.chat_id = cmj.chat_id
+                 AND participant_handle.id COLLATE NOCASE IN (\(placeholders))
+             )
+           )
+          """
+        for participant in filter.participants {
+          bindings.append(participant)
+        }
         for participant in filter.participants {
           bindings.append(participant)
         }
       }
     }
 
+    let boundedLimit = max(limit, 1)
+    let rawLimit = min(max(boundedLimit + 1, boundedLimit * 2), 50_000)
     sql += " ORDER BY m.date ASC, m.ROWID ASC LIMIT ?"
-    bindings.append(limit)
+    bindings.append(rawLimit)
 
     self.sql = sql
     self.bindings = bindings
@@ -447,14 +477,19 @@ extension MessageStore {
     limit: Int,
     filter: MessageFilter?,
     isFromMe: Bool?,
-    includeReactions: Bool = false
+    includeReactions: Bool = false,
+    resolveText: Bool = true,
+    includeAttachmentCount: Bool = true
   ) throws -> [Message] {
+    let boundedLimit = max(limit, 1)
     let query = MessagesWindowQuery(
       store: self,
-      limit: limit,
+      limit: boundedLimit,
       filter: filter,
       isFromMe: isFromMe,
-      includeReactions: includeReactions
+      includeReactions: includeReactions,
+      resolveText: resolveText,
+      includeAttachmentCount: includeAttachmentCount
     )
 
     return try withConnection { db in
@@ -518,6 +553,9 @@ extension MessageStore {
               reactedToGUID: reaction.reactedToGUID
             )
           ))
+        if messages.count >= boundedLimit {
+          break
+        }
       }
       return messages
     }

@@ -24,12 +24,17 @@ enum ReportCommand {
           .make(
             label: "includeReactions", names: [.long("include-reactions")],
             help: "include tapback metadata for exported messages"
+          ),
+          .make(
+            label: "noText", names: [.long("no-text")],
+            help: "omit message text and skip attributedBody/audio text decoding"
           )
         ]
       )
     ),
     usageExamples: [
       "imsg report --direction sent --start 2026-05-05T00:00:00Z --end 2026-05-06T00:00:00Z --json",
+      "imsg report --direction sent --start 2026-05-05T00:00:00Z --end 2026-05-06T00:00:00Z --no-text --json",
       "imsg report --direction both --start 2026-05-05T00:00:00Z --limit 500 --json",
     ]
   ) { values, runtime in
@@ -59,21 +64,25 @@ enum ReportCommand {
     )
     let isFromMe = try directionFilter(values.option("direction") ?? "sent")
     let includeReactions = values.flag("includeReactions")
+    let includeText = !values.flag("noText")
 
     let store = try MessageStore(path: dbPath)
     let messages = try store.messages(
       limit: limit,
       filter: filter,
       isFromMe: isFromMe,
-      includeReactions: includeReactions
+      includeReactions: includeReactions,
+      resolveText: includeText,
+      includeAttachmentCount: includeText
     )
-    let contacts = await contactResolverFactory()
+    let contacts: any ContactResolving =
+      isFromMe == true && !includeReactions ? NoOpContactResolver() : await contactResolverFactory()
 
     if runtime.jsonOutput {
       let cache = ChatCache(store: store)
       let reactionsByMessageID = includeReactions ? try store.reactions(for: messages) : [:]
       for message in messages {
-        let payload = try await buildMessagePayload(
+        var payload = try await buildMessagePayload(
           store: store,
           cache: cache,
           message: message,
@@ -82,6 +91,9 @@ enum ReportCommand {
           prefetchedReactions: reactionsByMessageID[message.rowID] ?? [],
           contactResolver: contacts
         )
+        if !includeText {
+          payload.removeValue(forKey: "text")
+        }
         try JSONLines.printObject(payload)
       }
       return
@@ -93,7 +105,8 @@ enum ReportCommand {
       let sender =
         message.isFromMe
         ? "me" : (contacts.displayName(for: message.sender) ?? message.sender)
-      StdoutWriter.writeLine("[\(message.chatID)] \(timestamp) [\(direction)] \(sender): \(message.text)")
+      let text = includeText ? message.text : ""
+      StdoutWriter.writeLine("[\(message.chatID)] \(timestamp) [\(direction)] \(sender): \(text)")
     }
   }
 

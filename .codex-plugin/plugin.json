@@ -1,6 +1,6 @@
 {
   "name": "imsg",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Local Messages.app access for Codex: list chats, read and search iMessage/SMS history, inspect sends, and approval-gated send or tapback reactions from this Mac.",
   "author": {
     "name": "KeystoneScience",
@@ -33,7 +33,7 @@
     "privacyPolicyURL": "https://github.com/KeystoneScience/imsg/blob/codex-plugin/README.md#permissions",
     "termsOfServiceURL": "https://github.com/KeystoneScience/imsg/blob/codex-plugin/LICENSE",
     "defaultPrompt": [
-      "List recent Messages chats and summarize what needs attention",
+      "Summarize everything I sent yesterday across Messages chats",
       "Search local iMessage/SMS history for a phrase or person",
       "Read the latest messages in a specific chat",
       "Prepare a Messages reply for review without sending",

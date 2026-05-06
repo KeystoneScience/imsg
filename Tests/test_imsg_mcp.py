@@ -154,6 +154,7 @@ class ImsgMcpTests(unittest.TestCase):
         summary = self.mcp.sent_summary({
             "start": "2026-05-05T00:00:00Z",
             "end": "2026-05-06T00:00:00Z",
+            "output_mode": "full",
         })
         self.assertEqual(summary["count"], 2)
         self.assertEqual(summary["conversation_count"], 1)
@@ -161,6 +162,74 @@ class ImsgMcpTests(unittest.TestCase):
         self.assertEqual(conversation["chat_display_name"], "Alice")
         self.assertEqual(conversation["message_count"], 2)
         self.assertEqual(conversation["messages"][0]["sender_display_name"], "Me")
+
+    def test_sent_summary_defaults_to_brief_budgeted_output(self):
+        self.mcp._CONTACT_INDEX = {
+            "phones": {"18015551212": "Alice"},
+            "emails": {},
+            "records": 1,
+            "sources": [],
+            "errors": [],
+        }
+
+        def fake_run_imsg(command, timeout=120):
+            self.assertNotIn("--no-text", command)
+            return "\n".join([
+                '{"id":1,"chat_id":7,"chat_identifier":"+18015551212","sender":"+18015551212","is_from_me":true,"text":"hello there","created_at":"2026-05-05T01:00:00.000Z","participants":["+18015551212"],"is_group":false}',
+                '{"id":2,"chat_id":7,"chat_identifier":"+18015551212","sender":"+18015551212","is_from_me":true,"text":"this is a longer message","created_at":"2026-05-05T02:00:00.000Z","participants":["+18015551212"],"is_group":false}',
+            ])
+
+        self.mcp.run_imsg = fake_run_imsg
+        summary = self.mcp.sent_summary({
+            "day": "2026-05-05",
+            "timezone": "America/Denver",
+            "max_text_chars": 10,
+            "max_total_text_chars": 15,
+            "max_messages_per_conversation": 1,
+        })
+        self.assertEqual(summary["output_mode"], "brief")
+        conversation = summary["conversations"][0]
+        self.assertEqual(conversation["name"], "Alice")
+        self.assertIn("lines", conversation)
+        self.assertNotIn("messages", conversation)
+        self.assertEqual(len(conversation["lines"]), 1)
+        self.assertEqual(conversation["omitted_messages"], 1)
+        self.assertLessEqual(summary["text_chars_returned"], 15)
+        self.assertGreater(conversation["truncated_chars"], 0)
+
+    def test_sent_summary_counts_mode_uses_no_text_report(self):
+        commands = []
+
+        def fake_run_imsg(command, timeout=120):
+            commands.append(command)
+            return "\n".join([
+                '{"id":1,"chat_id":7,"chat_identifier":"+18015551212","sender":"+18015551212","is_from_me":true,"created_at":"2026-05-05T01:00:00.000Z","participants":["+18015551212"],"is_group":false}'
+            ])
+
+        self.mcp.run_imsg = fake_run_imsg
+        summary = self.mcp.sent_summary({
+            "start": "2026-05-05T00:00:00Z",
+            "end": "2026-05-06T00:00:00Z",
+            "output_mode": "counts",
+        })
+        self.assertIn("--no-text", commands[0])
+        self.assertFalse(summary["include_text"])
+        self.assertNotIn("lines", summary["conversations"][0])
+        self.assertNotIn("text_chars", summary["conversations"][0])
+
+    def test_direct_conversation_prefers_resolved_name_over_phone_chat_name(self):
+        participant_names = {"+18015551212": "Alice"}
+        name = self.mcp.display_name_for_conversation(
+            {
+                "chat_name": "+18015551212",
+                "chat_identifier": "+18015551212",
+                "chat_guid": "iMessage;-;+18015551212",
+                "participants": ["+18015551212"],
+                "is_group": False,
+            },
+            participant_names,
+        )
+        self.assertEqual(name, "Alice")
 
     def tearDown(self):
         self.mcp._CONTACT_INDEX = None
