@@ -27,6 +27,7 @@ SERVER_NAME = "imsg"
 SERVER_VERSION = "0.6.0"
 ROOT = Path(__file__).resolve().parents[1]
 MESSAGES_DB = Path.home() / "Library" / "Messages" / "chat.db"
+ADDRESSBOOK_ROOT = Path.home() / "Library" / "Application Support" / "AddressBook"
 APP_SUPPORT = Path.home() / "Library" / "Application Support" / "Codex imsg"
 OP_LOG = APP_SUPPORT / "operation-log.jsonl"
 MAX_SEND_ATTACHMENT_BYTES = 25 * 1024 * 1024
@@ -54,6 +55,9 @@ SENSITIVE_LOG_KEYS = {
 
 class ToolError(Exception):
     pass
+
+
+_CONTACT_INDEX: dict[str, Any] | None = None
 
 
 def json_text(payload: Any) -> dict[str, Any]:
@@ -98,6 +102,267 @@ def string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     return [str(value).strip()]
+
+
+def strip_service_prefix(handle: str) -> str:
+    trimmed = handle.strip()
+    for prefix in ("iMessage;-;", "iMessage;+;", "SMS;-;", "SMS;+;", "any;-;", "any;+;"):
+        if trimmed.startswith(prefix):
+            return trimmed[len(prefix) :]
+    return trimmed
+
+
+def phone_digits(value: str) -> str:
+    return re.sub(r"\D+", "", strip_service_prefix(value))
+
+
+def phone_lookup_keys(value: str) -> list[str]:
+    digits = phone_digits(value)
+    if not digits:
+        return []
+    keys = [digits]
+    if len(digits) == 10:
+        keys.append("1" + digits)
+    if len(digits) == 11 and digits.startswith("1"):
+        keys.append(digits[1:])
+    if len(digits) > 10:
+        keys.append(digits[-10:])
+    return list(dict.fromkeys(keys))
+
+
+def display_name_from_row(row: sqlite3.Row) -> str | None:
+    parts = []
+    for key in ("ZNICKNAME", "ZFIRSTNAME", "ZMIDDLENAME", "ZLASTNAME"):
+        value = row[key] if key in row.keys() else None
+        if value:
+            parts.append(str(value).strip())
+    if parts:
+        if row["ZNICKNAME"]:
+            return str(row["ZNICKNAME"]).strip()
+        return " ".join(part for part in parts if part)
+    for key in ("ZNAME", "ZORGANIZATION"):
+        value = row[key] if key in row.keys() else None
+        if value:
+            return str(value).strip()
+    return None
+
+
+def addressbook_dbs() -> list[Path]:
+    candidates = [ADDRESSBOOK_ROOT / "AddressBook-v22.abcddb"]
+    candidates.extend(sorted((ADDRESSBOOK_ROOT / "Sources").glob("*/AddressBook-v22.abcddb")))
+    return [path for path in candidates if path.exists()]
+
+
+def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    try:
+        return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
+    except sqlite3.Error:
+        return set()
+
+
+def select_column(alias: str, columns: set[str], column: str) -> str:
+    if column in columns:
+        return f"{alias}.{column} AS {column}"
+    return f"NULL AS {column}"
+
+
+def owner_join_expr(alias: str, columns: set[str]) -> str | None:
+    candidates = []
+    if "ZOWNER" in columns:
+        candidates.append(f"{alias}.ZOWNER")
+    candidates.extend(f"{alias}.{column}" for column in sorted(columns) if re.fullmatch(r"Z\d+_OWNER", column))
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    return f"COALESCE({', '.join(candidates)})"
+
+
+def load_contacts_index() -> dict[str, Any]:
+    global _CONTACT_INDEX
+    if _CONTACT_INDEX is not None:
+        return _CONTACT_INDEX
+
+    phones: dict[str, str] = {}
+    emails: dict[str, str] = {}
+    records = 0
+    sources: list[str] = []
+    errors: list[str] = []
+
+    for db_path in addressbook_dbs():
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only=ON")
+        except sqlite3.Error as exc:
+            errors.append(f"{db_path}: {exc}")
+            continue
+        try:
+            sources.append(str(db_path))
+            record_columns = table_columns(conn, "ZABCDRECORD")
+            phone_columns = table_columns(conn, "ZABCDPHONENUMBER")
+            email_columns = table_columns(conn, "ZABCDEMAILADDRESS")
+            name_selects = [
+                select_column("r", record_columns, column)
+                for column in ("ZNICKNAME", "ZFIRSTNAME", "ZMIDDLENAME", "ZLASTNAME", "ZNAME", "ZORGANIZATION")
+            ]
+            phone_owner = owner_join_expr("p", phone_columns)
+            email_owner = owner_join_expr("e", email_columns)
+
+            if record_columns and phone_columns and phone_owner:
+                phone_selects = [
+                    select_column("p", phone_columns, column)
+                    for column in ("ZFULLNUMBER", "ZLOCALNUMBER", "ZCOUNTRYCODE", "ZAREACODE")
+                ]
+                phone_rows = conn.execute(
+                    f"""
+                    SELECT {", ".join(phone_selects + name_selects)}
+                    FROM ZABCDPHONENUMBER p
+                    LEFT JOIN ZABCDRECORD r ON {phone_owner} = r.Z_PK
+                    """
+                ).fetchall()
+            else:
+                phone_rows = []
+            for row in phone_rows:
+                name = display_name_from_row(row)
+                if not name:
+                    continue
+                values = [row["ZFULLNUMBER"], row["ZLOCALNUMBER"]]
+                combined = "".join(str(row[key] or "") for key in ("ZCOUNTRYCODE", "ZAREACODE", "ZLOCALNUMBER"))
+                values.append(combined)
+                for value in values:
+                    if not value:
+                        continue
+                    for key in phone_lookup_keys(str(value)):
+                        phones.setdefault(key, name)
+                records += 1
+
+            if record_columns and email_columns and email_owner:
+                email_selects = [
+                    select_column("e", email_columns, column)
+                    for column in ("ZADDRESS", "ZADDRESSNORMALIZED")
+                ]
+                email_rows = conn.execute(
+                    f"""
+                    SELECT {", ".join(email_selects + name_selects)}
+                    FROM ZABCDEMAILADDRESS e
+                    LEFT JOIN ZABCDRECORD r ON {email_owner} = r.Z_PK
+                    """
+                ).fetchall()
+            else:
+                email_rows = []
+            for row in email_rows:
+                name = display_name_from_row(row)
+                if not name:
+                    continue
+                for value in (row["ZADDRESS"], row["ZADDRESSNORMALIZED"]):
+                    if value:
+                        emails.setdefault(str(value).strip().lower(), name)
+                records += 1
+        except sqlite3.Error as exc:
+            errors.append(f"{db_path}: {exc}")
+        finally:
+            conn.close()
+
+    _CONTACT_INDEX = {
+        "phones": phones,
+        "emails": emails,
+        "records": records,
+        "sources": sources,
+        "errors": errors,
+    }
+    return _CONTACT_INDEX
+
+
+def contact_name_for_handle(handle: Any) -> str | None:
+    if handle in (None, ""):
+        return None
+    raw = strip_service_prefix(str(handle))
+    index = load_contacts_index()
+    if "@" in raw:
+        return index["emails"].get(raw.lower())
+    for key in phone_lookup_keys(raw):
+        if key in index["phones"]:
+            return index["phones"][key]
+    return None
+
+
+def resolve_handles(handles: list[str]) -> dict[str, str]:
+    resolved: dict[str, str] = {}
+    for handle in handles:
+        name = contact_name_for_handle(handle)
+        if name:
+            resolved[handle] = name
+    return resolved
+
+
+def enrich_chat(chat: dict[str, Any]) -> dict[str, Any]:
+    participants = [str(item) for item in chat.get("participants") or []]
+    participant_names = resolve_handles(participants)
+    chat["participant_names"] = participant_names
+    chat["resolved_participants"] = [
+        {"handle": handle, "name": participant_names.get(handle)} for handle in participants
+    ]
+    existing_name = str(chat.get("display_name") or chat.get("contact_name") or chat.get("name") or "").strip()
+    if existing_name:
+        chat["resolved_name"] = existing_name
+        return chat
+    direct_name = None
+    if not chat.get("is_group") and participants:
+        direct_name = participant_names.get(participants[0])
+    if direct_name:
+        chat["contact_name"] = chat.get("contact_name") or direct_name
+        chat["display_name"] = chat.get("display_name") or direct_name
+        chat["resolved_name"] = direct_name
+        return chat
+    if chat.get("is_group") and participant_names:
+        names = [participant_names.get(handle) or handle for handle in participants]
+        label = ", ".join(names[:4])
+        if len(names) > 4:
+            label += f" +{len(names) - 4}"
+        chat["resolved_name"] = label
+    else:
+        chat["resolved_name"] = str(chat.get("identifier") or chat.get("guid") or "")
+    return chat
+
+
+def enrich_message(message: dict[str, Any]) -> dict[str, Any]:
+    sender = str(message.get("sender") or "")
+    sender_name = str(message.get("sender_name") or "").strip()
+    if message.get("is_from_me"):
+        message["sender_display_name"] = "Me"
+    elif not sender_name and sender:
+        sender_name = contact_name_for_handle(sender) or ""
+        if sender_name:
+            message["sender_name"] = sender_name
+        message["sender_display_name"] = sender_name or sender
+    else:
+        message["sender_display_name"] = sender_name or sender
+    participants = [str(item) for item in message.get("participants") or []]
+    participant_names = resolve_handles(participants)
+    message["participant_names"] = participant_names
+    chat_name = str(message.get("chat_name") or "").strip()
+    if not chat_name:
+        if not message.get("is_group") and participants:
+            chat_name = participant_names.get(participants[0]) or ""
+        elif participant_names:
+            names = [participant_names.get(handle) or handle for handle in participants]
+            chat_name = ", ".join(names[:4])
+    if chat_name:
+        message["chat_display_name"] = chat_name
+    return message
+
+
+def contacts_state() -> dict[str, Any]:
+    index = load_contacts_index()
+    return {
+        "available": bool(index["phones"] or index["emails"]),
+        "phone_keys": len(index["phones"]),
+        "email_keys": len(index["emails"]),
+        "records_seen": index["records"],
+        "sources_count": len(index["sources"]),
+        "errors": index["errors"][:5],
+    }
 
 
 def redact_for_log(payload: dict[str, Any]) -> dict[str, Any]:
@@ -245,6 +510,7 @@ def append_history_args(command: list[str], args: dict[str, Any]) -> list[str]:
 def list_chats(args: dict[str, Any]) -> dict[str, Any]:
     limit = clamp_int(args.get("limit"), default=20, maximum=200)
     rows = parse_ndjson(run_imsg(["chats", *base_args(args), "--limit", str(limit), "--json"]))
+    rows = [enrich_chat(row) for row in rows]
     return {"chats": rows, "count": len(rows)}
 
 
@@ -253,7 +519,7 @@ def get_chat(args: dict[str, Any]) -> dict[str, Any]:
     if chat_id is None:
         raise ToolError("chat_id is required")
     rows = parse_ndjson(run_imsg(["group", *base_args(args), "--chat-id", str(chat_id), "--json"]))
-    return {"chat": rows[0] if rows else None}
+    return {"chat": enrich_chat(rows[0]) if rows else None}
 
 
 def read_messages(args: dict[str, Any]) -> dict[str, Any]:
@@ -262,15 +528,29 @@ def read_messages(args: dict[str, Any]) -> dict[str, Any]:
         raise ToolError("chat_id is required")
     command = ["history", *base_args(args), "--chat-id", str(chat_id)]
     rows = parse_ndjson(run_imsg(append_history_args(command, args)))
+    rows = [enrich_message(row) for row in rows]
     return {"messages": rows, "count": len(rows), "chat_id": chat_id}
 
 
 def text_fields_for_match(message: dict[str, Any]) -> dict[str, str]:
     fields = {}
-    for key in ("text", "sender", "sender_name", "chat_name", "chat_identifier", "chat_guid"):
+    for key in (
+        "text",
+        "sender",
+        "sender_name",
+        "sender_display_name",
+        "chat_name",
+        "chat_display_name",
+        "resolved_name",
+        "chat_identifier",
+        "chat_guid",
+    ):
         value = message.get(key)
         if value not in (None, ""):
             fields[key] = str(value)
+    participant_names = message.get("participant_names")
+    if isinstance(participant_names, dict) and participant_names:
+        fields["participant_names"] = "\n".join(str(value) for value in participant_names.values() if value)
     return fields
 
 
@@ -536,6 +816,7 @@ def get_state(args: dict[str, Any]) -> dict[str, Any]:
         "messages_db": db_quick_check(),
         "send_enabled": os.environ.get("ALLOW_IMSG_SEND") == "1",
         "react_enabled": os.environ.get("ALLOW_IMSG_REACT") == "1",
+        "contacts": contacts_state(),
     }
     if args.get("include_cli_status") and command is not None:
         try:
@@ -632,6 +913,21 @@ TOOLS: dict[str, dict[str, Any]] = {
             "additionalProperties": False,
         },
         "handler": search_messages,
+    },
+    "imsg_resolve_contacts": {
+        "description": "Resolve phone numbers, emails, or Messages handles to local Contacts names when available.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "handles": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["handles"],
+            "additionalProperties": False,
+        },
+        "handler": lambda args: {
+            "resolved": resolve_handles(string_list(args.get("handles"))),
+            "contacts": contacts_state(),
+        },
     },
     "imsg_prepare_send": {
         "description": "Inspect a Messages send payload and return the send_sha256 required before sending. Does not send.",

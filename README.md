@@ -8,11 +8,14 @@ Run this in Codex or your terminal on a Mac:
 # from a local clone
 codex plugin marketplace add /path/to/imsg
 
-# from GitHub after the marketplace manifest is published on main
+# from this working GitHub branch
+codex plugin marketplace add KeystoneScience/imsg --ref codex-plugin
+
+# from upstream after the marketplace manifest is published on main
 codex plugin marketplace add openclaw/imsg --ref main
 ```
 
-Then restart Codex, open the plugin picker, and install **imsg** from the new marketplace. Grant Full Disk Access to Codex so the plugin can read Messages.app history. Sending and tapback reactions are disabled by default; only enable them after explicit approval by setting `ALLOW_IMSG_SEND=1` or `ALLOW_IMSG_REACT=1` in the plugin environment.
+Then restart Codex, open the plugin picker, and install **imsg** from the new marketplace. Grant Full Disk Access to Codex so the plugin can read Messages.app history and local Contacts metadata. The plugin resolves phone numbers and emails into names for chat lists, history reads, and searches when Contacts data is available. Sending and tapback reactions are disabled by default; only enable them after explicit approval by setting `ALLOW_IMSG_SEND=1` or `ALLOW_IMSG_REACT=1` in the plugin environment.
 
 `imsg` is a macOS command-line tool for Messages.app. It reads your local
 Messages database, streams new iMessage/SMS rows, sends messages through

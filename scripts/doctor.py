@@ -56,6 +56,7 @@ def main() -> int:
         schema_ok = not contains_schema_composition(tool_schemas)
         checks["imsg"] = state["imsg_command"]
         checks["messages_db"] = state["messages_db"]
+        checks["contacts"] = state.get("contacts")
         checks["tool_count"] = len(tool_schemas)
         checks["schema_compatible"] = schema_ok
         ok = ok and schema_ok and state["imsg_command"]["available"]

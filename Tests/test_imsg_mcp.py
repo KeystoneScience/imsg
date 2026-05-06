@@ -41,6 +41,7 @@ class ImsgMcpTests(unittest.TestCase):
         self.assertIn("imsg_list_chats", names)
         self.assertIn("imsg_prepare_send", names)
         self.assertIn("imsg_send_reaction", names)
+        self.assertIn("imsg_resolve_contacts", names)
 
     def test_prepare_send_returns_stable_hash(self):
         args = {"to": "+15551234567", "text": "hello", "service": "imessage"}
@@ -76,6 +77,62 @@ class ImsgMcpTests(unittest.TestCase):
         self.assertEqual(payload["reaction"], "like")
         with self.assertRaises(self.mcp.ToolError):
             self.mcp.validate_reaction_payload({"chat_id": 42, "reaction": "party"})
+
+    def test_contact_phone_keys_include_us_variants(self):
+        self.assertIn("18015551212", self.mcp.phone_lookup_keys("+1 (801) 555-1212"))
+        self.assertIn("8015551212", self.mcp.phone_lookup_keys("+1 (801) 555-1212"))
+
+    def test_addressbook_owner_join_uses_numbered_owner_columns(self):
+        expr = self.mcp.owner_join_expr("p", {"ZOWNER", "Z21_OWNER", "ZFULLNUMBER"})
+        self.assertEqual(expr, "COALESCE(p.ZOWNER, p.Z21_OWNER)")
+
+    def test_enrich_chat_uses_contact_fallback(self):
+        self.mcp._CONTACT_INDEX = {
+            "phones": {"18015551212": "Alice"},
+            "emails": {},
+            "records": 1,
+            "sources": [],
+            "errors": [],
+        }
+        chat = self.mcp.enrich_chat({
+            "id": 1,
+            "identifier": "+18015551212",
+            "name": "",
+            "display_name": "",
+            "contact_name": None,
+            "participants": ["+18015551212"],
+            "is_group": False,
+        })
+        self.assertEqual(chat["resolved_name"], "Alice")
+        self.assertEqual(chat["display_name"], "Alice")
+
+    def test_search_fields_include_resolved_contact_names(self):
+        fields = self.mcp.text_fields_for_match({
+            "text": "hello",
+            "participant_names": {"+18015551212": "Alice"},
+            "chat_display_name": "Alice",
+        })
+        self.assertIn("Alice", fields["participant_names"])
+        self.assertEqual(fields["chat_display_name"], "Alice")
+
+    def test_outgoing_messages_display_as_me(self):
+        self.mcp._CONTACT_INDEX = {
+            "phones": {"18015551212": "Alice"},
+            "emails": {},
+            "records": 1,
+            "sources": [],
+            "errors": [],
+        }
+        message = self.mcp.enrich_message({
+            "sender": "+18015551212",
+            "is_from_me": True,
+            "participants": ["+18015551212"],
+        })
+        self.assertEqual(message["sender_display_name"], "Me")
+        self.assertEqual(message["chat_display_name"], "Alice")
+
+    def tearDown(self):
+        self.mcp._CONTACT_INDEX = None
 
 
 if __name__ == "__main__":
