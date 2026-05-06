@@ -1,9 +1,9 @@
 ---
-name: imsg
-description: Use for local iMessage/SMS archive reads, chat history, watch, and explicitly requested sends.
+name: mac-message
+description: Use for local Apple Messages archive reads, chat history, search, contact-resolved lookup, and explicitly requested sends.
 ---
 
-# imsg
+# Mac Message
 
 Use this for Messages.app history, chat lookup, streaming, and sends. Reading is local DB access; sending uses Messages automation and must be explicitly requested. When the Codex plugin is installed, prefer the MCP tools first (`imsg_list_chats`, `imsg_read_messages`, `imsg_search_messages`, `imsg_prepare_send`, `imsg_send_message`, `imsg_prepare_reaction`, `imsg_send_reaction`) because they add bounded reads and write approval gates.
 
