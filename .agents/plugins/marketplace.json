@@ -1,7 +1,7 @@
 {
   "name": "imsg",
   "interface": {
-    "displayName": "imsg"
+    "displayName": "Mac Message Codex Plugin"
   },
   "plugins": [
     {

@@ -1,282 +1,123 @@
-# imsg
+# Mac Message Codex Plugin
 
-## Add The Codex Marketplace
+![Mac Message Codex Plugin](docs/assets/mac-message-codex-plugin.png)
 
-Run this in Codex or your terminal on a Mac:
+A Codex plugin for local Apple Messages on macOS. It lets Codex list chats,
+read and search iMessage/SMS history, resolve phone numbers through local
+Contacts data, prepare replies, and send messages or tapback reactions only
+after explicit approval gates.
+
+## Install In Codex
+
+From this fork:
 
 ```bash
-# from a local clone
-codex plugin marketplace add /path/to/imsg
-
-# from this working GitHub branch
 codex plugin marketplace add KeystoneScience/imsg --ref codex-plugin
-
-# from upstream after the marketplace manifest is published on main
-codex plugin marketplace add openclaw/imsg --ref main
 ```
 
-Then restart Codex, open the plugin picker, and install **imsg** from the new marketplace. Grant Full Disk Access to Codex so the plugin can read Messages.app history and local Contacts metadata. The plugin resolves phone numbers and emails into names for chat lists, history reads, and searches when Contacts data is available. Sending and tapback reactions are disabled by default; only enable them after explicit approval by setting `ALLOW_IMSG_SEND=1` or `ALLOW_IMSG_REACT=1` in the plugin environment.
+From a local checkout:
 
-`imsg` is a macOS command-line tool for Messages.app. It reads your local
-Messages database, streams new iMessage/SMS rows, sends messages through
-Messages.app automation, and exposes the same surfaces over JSON and JSON-RPC.
+```bash
+codex plugin marketplace add /path/to/imsg
+```
 
-Most read workflows need only Full Disk Access. Sending and standard tapbacks
-also need macOS Automation permission for Messages.app. Advanced IMCore features
-such as read receipts, typing indicators, and injection status are opt-in and
-are increasingly limited by macOS 26.
+Then restart Codex, open the plugin picker, and install **imsg** from the new
+marketplace. Grant Full Disk Access to Codex so the plugin can read
+Messages.app history and local Contacts metadata.
 
-## Highlights
+## What Codex Gets
 
-- Read recent chats and message history without modifying `chat.db`.
-- Stream new messages with `watch`, including a fallback poll when macOS misses
-  file events.
-- Send text and files through Messages.app AppleScript, without private send
-  APIs.
-- Inspect direct chats and groups, including participants, GUIDs, service, and
-  account routing hints.
-- Emit newline-delimited JSON for automation, agents, and scripts.
-- Resolve Contacts names when permission is granted, while keeping raw handles
-  in the output.
-- Report attachment metadata, and optionally expose model-compatible converted
-  receive-side CAF/GIF files.
-- Use JSON-RPC over stdio for long-running integrations.
+- `imsg_get_state`: check plugin health, binary discovery, Messages DB access,
+  Contacts indexing, and send/react gates.
+- `imsg_permissions_check`: explain required macOS permissions and open the
+  relevant System Settings panes when requested.
+- `imsg_list_chats`: list recent local Messages chats with participants and
+  resolved display names.
+- `imsg_get_chat`: inspect one direct or group chat by `chat_id`.
+- `imsg_read_messages`: read bounded recent history for a chat.
+- `imsg_search_messages`: search recent history across one chat or recent chats,
+  including contact-resolved names.
+- `imsg_resolve_contacts`: resolve phone numbers, emails, or Messages handles to
+  local Contacts names.
+- `imsg_prepare_send`: inspect a proposed send payload and return the hash
+  required before sending.
+- `imsg_send_message`: send only when the payload hash, confirmation flag,
+  approval note, and `ALLOW_IMSG_SEND=1` gate all match.
+- `imsg_prepare_reaction`: inspect a standard tapback reaction against the latest
+  incoming message and return the hash required before reacting.
+- `imsg_send_reaction`: send a standard tapback only when the payload hash,
+  confirmation flag, approval note, and `ALLOW_IMSG_REACT=1` gate all match.
 
-## Requirements
+## Safety Model
 
-- macOS 14 or newer.
+Read/search tools open local databases read-only. They do not modify
+`~/Library/Messages/chat.db` or Contacts data.
+
+Sending and tapback reactions are disabled by default. A send requires:
+
+```text
+imsg_prepare_send -> reviewed payload hash -> ALLOW_IMSG_SEND=1 -> imsg_send_message
+```
+
+A reaction requires:
+
+```text
+imsg_prepare_reaction -> reviewed payload hash -> ALLOW_IMSG_REACT=1 -> imsg_send_reaction
+```
+
+Both write paths also require a matching hash, an explicit confirmation boolean,
+and an approval note. This keeps Codex useful for drafting and inspection while
+making accidental outbound actions hard to trigger.
+
+## Permissions
+
+- Full Disk Access for Codex: required for local Messages history and Contacts
+  name resolution.
 - Messages.app signed in to iMessage and/or SMS relay.
-- Full Disk Access for the terminal or parent app that launches `imsg`.
-- Automation permission for Messages.app when using `send` or `react`.
-- Optional Contacts permission for name resolution.
-- Optional `ffmpeg` on `PATH` for receive-side attachment conversion.
+- Automation permission for Messages.app: required only when sending messages or
+  tapback reactions.
+- Accessibility permission may be needed for tapbacks because Messages tapbacks
+  use UI automation.
 
 For SMS, enable Text Message Forwarding on your iPhone for this Mac.
 
-## Install
+## Useful Prompts
 
-```bash
-brew install steipete/tap/imsg
-```
+- "List my recent Messages chats and tell me what needs attention."
+- "Search my local messages for Sabrina and summarize the latest thread."
+- "Read the latest messages in chat 1292, but do not send anything."
+- "Prepare a reply to this thread for me to approve."
+- "React with a like to the latest incoming message in this chat."
+- "Check whether the plugin has the permissions it needs."
 
-Build from source:
+## Local Verification
+
+Build the underlying local helper:
 
 ```bash
 make build
-./bin/imsg --help
 ```
 
-## Common Workflows
-
-List recent chats:
+Run the Codex plugin doctor:
 
 ```bash
-imsg chats --limit 10
-imsg chats --limit 10 --json
+bash scripts/run_doctor.sh
 ```
 
-Inspect one chat before sending or wiring automation:
+Run the plugin tests:
 
 ```bash
-imsg group --chat-id 42 --json
+python3 -m unittest discover -s Tests -v
 ```
 
-Read history:
+Run the full Swift test suite:
 
 ```bash
-imsg history --chat-id 42 --limit 20
-imsg history --chat-id 42 --limit 20 --attachments --json
-imsg history --chat-id 42 --start 2026-05-01T00:00:00Z --end 2026-05-06T00:00:00Z --json
-```
-
-Stream new messages:
-
-```bash
-imsg watch --chat-id 42 --json
-imsg watch --chat-id 42 --since-rowid 9000 --attachments --reactions --debounce 250ms --json
-```
-
-Send a message or file:
-
-```bash
-imsg send --to "+14155551212" --text "hi" --service imessage
-imsg send --to "Jane Appleseed" --text "voice note" --file ~/Desktop/voice.m4a
-imsg send --chat-id 42 --text "same thread"
-```
-
-Send a standard tapback:
-
-```bash
-imsg react --chat-id 42 --reaction like
-```
-
-Generate integration help:
-
-```bash
-imsg completions zsh
-imsg completions llm
-```
-
-## Commands
-
-- `imsg chats [--limit 20] [--json]`
-- `imsg group --chat-id <id> [--json]`
-- `imsg history --chat-id <id> [--limit 50] [--attachments] [--convert-attachments] [--participants <handles>] [--start <iso>] [--end <iso>] [--json]`
-- `imsg watch [--chat-id <id>] [--since-rowid <id>] [--debounce <duration>] [--attachments] [--convert-attachments] [--reactions] [--participants <handles>] [--start <iso>] [--end <iso>] [--json]`
-- `imsg send (--to <handle-or-contact-name> | --chat-id <id> | --chat-identifier <id> | --chat-guid <guid>) [--text <text>] [--file <path>] [--service imessage|sms|auto] [--region US] [--json]`
-- `imsg react --chat-id <id> --reaction love|like|dislike|laugh|emphasis|question`
-- `imsg read --to <handle> [--chat-id <id> | --chat-identifier <id> | --chat-guid <guid>]`
-- `imsg typing --to <handle> [--duration 5s] [--stop true] [--service imessage|sms|auto]`
-- `imsg status [--json]`
-- `imsg launch [--dylib <path>] [--kill-only] [--json]`
-- `imsg rpc`
-- `imsg completions bash|zsh|fish|llm`
-
-`react` intentionally sends only the standard tapbacks that Messages.app exposes
-reliably through automation. Custom emoji tapbacks can be read from
-history/watch output, but are not sent by the CLI.
-
-## JSON Output
-
-`--json` emits one JSON object per line, so consumers can stream it directly or
-collect it with `jq -s`.
-
-Chat objects include:
-
-- `id`, `name`, `identifier`, `guid`, `service`, `last_message_at`
-- `display_name`, `contact_name`
-- `is_group`, `participants`
-- `account_id`, `account_login`, `last_addressed_handle`
-
-Message objects include:
-
-- `id`, `chat_id`, `chat_identifier`, `chat_guid`, `chat_name`
-- `participants`, `is_group`
-- `guid`, `reply_to_guid`, `destination_caller_id`
-- `sender`, `sender_name`, `is_from_me`, `text`, `created_at`
-- `attachments`, `reactions`
-
-When `watch --reactions --json` sees a tapback event, the message object also
-includes `is_reaction`, `reaction_type`, `reaction_emoji`, `is_reaction_add`,
-and `reacted_to_guid`.
-
-Routing fields such as `destination_caller_id`, `account_id`,
-`account_login`, and `last_addressed_handle` are read-only diagnostics from
-Messages. AppleScript does not expose a way for `imsg send` to force a specific
-outgoing Apple ID phone number or inline reply target.
-
-## JSON-RPC
-
-`imsg rpc` speaks JSON-RPC 2.0 over stdin/stdout, one JSON object per line. It
-is intended for agents and long-running integrations that want a single process
-for chats, history, send, and watch.
-
-Read methods:
-
-- `chats.list`
-- `messages.history`
-- `watch.subscribe`
-- `watch.unsubscribe`
-
-Mutating method:
-
-- `send`
-
-See [docs/rpc.md](docs/rpc.md) for request and response shapes.
-
-## Attachments
-
-`--attachments` reports metadata only. It does not copy or upload files.
-
-Attachment metadata includes filename, transfer name, UTI, MIME type, byte
-count, sticker flag, missing flag, and resolved original path.
-
-`--convert-attachments` can expose cached, model-compatible receive-side
-variants:
-
-- CAF audio -> M4A
-- GIF image -> first-frame PNG
-
-Conversion requires `ffmpeg` on `PATH`. Original Messages attachments are left
-unchanged. Converted metadata is reported with `converted_path` and
-`converted_mime_type`.
-
-`send --file` sends regular files, including audio files, through Messages.app.
-Before handing the file to Messages, `imsg` stages it under
-`~/Library/Messages/Attachments/imsg/` so Messages can read it reliably.
-
-## Watch Behavior
-
-`imsg watch` starts at the newest message by default and streams messages written
-after it starts. Use `--since-rowid <id>` to resume from a stored cursor.
-
-The watcher listens for filesystem events on `chat.db`, `chat.db-wal`, and
-`chat.db-shm`, then backs that up with a lightweight poll. The poll keeps
-streams alive when macOS drops file events or rotates SQLite sidecar files.
-
-RPC watch defaults to a 500ms debounce to reduce outbound echo races. CLI watch
-can be tuned with `--debounce`.
-
-## Permissions Troubleshooting
-
-If reads fail with `unable to open database file`, empty output, or
-`authorization denied`:
-
-1. Open System Settings -> Privacy & Security -> Full Disk Access.
-2. Add the terminal or parent app that launches `imsg`.
-3. If launched from an editor, Node process, gateway, or shell wrapper, grant
-   Full Disk Access to that parent app too.
-4. Also add the built-in Terminal.app at
-   `/System/Applications/Utilities/Terminal.app`; macOS can still consult the
-   default terminal grant.
-5. Toggle stale Full Disk Access entries off and on after terminal, Homebrew,
-   Node, or app updates.
-6. Confirm Messages.app is signed in and `~/Library/Messages/chat.db` exists.
-
-For sends and tapbacks, allow the terminal or parent app under Privacy &
-Security -> Automation -> Messages.
-
-`imsg` opens `chat.db` read-only. It does not use SQLite `immutable=1` by
-default because immutable reads can miss WAL-backed Messages updates.
-
-## Advanced IMCore Features
-
-Default `send`, `chats`, `history`, `watch`, and read-only `rpc` workflows do
-not require IMCore injection.
-
-Advanced features such as `read`, `typing`, `launch`, and IMCore bridge status are
-opt-in. They require SIP to be disabled and a helper dylib to be injected into
-Messages.app:
-
-```bash
-make build-dylib
-imsg launch
-imsg status
-```
-
-Important limits:
-
-- `imsg launch` refuses to inject when SIP is enabled.
-- `imsg status` is read-only and does not auto-launch or auto-inject.
-- macOS 26/Tahoe can block injection through library validation.
-- macOS 26/Tahoe can also reject direct IMCore clients through `imagent`
-  private-entitlement checks.
-- These limits affect advanced IMCore features such as typing indicators, not
-  normal send/history/watch usage.
-
-To revert after testing advanced features, re-enable SIP from Recovery mode with
-`csrutil enable`.
-
-## Development
-
-```bash
-make lint
 make test
-make build
 ```
 
-`make test` applies the repository's SQLite.swift patch before running Swift
-tests.
+## Notes
 
-The reusable Swift core lives in `Sources/IMsgCore`; the CLI target lives in
-`Sources/imsg`.
+This fork is intentionally documented as a Codex plugin first. The bundled MCP
+server wraps the local `imsg` helper so Codex can use Messages.app without
+needing direct database writes or private send APIs.
