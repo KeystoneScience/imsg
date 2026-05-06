@@ -409,18 +409,47 @@ def log_operation(kind: str, payload: dict[str, Any]) -> None:
         pass
 
 
+def parse_version_tuple(value: str) -> tuple[int, ...]:
+    match = re.search(r"(\d+(?:\.\d+)+)", value)
+    if not match:
+        return ()
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def compatible_imsg_binary(path: Path) -> bool:
+    required = parse_version_tuple(SERVER_VERSION)
+    try:
+        result = subprocess.run(
+            [str(path), "--version"],
+            cwd=str(ROOT),
+            text=True,
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    actual = parse_version_tuple((result.stdout or result.stderr or "").strip())
+    if not actual or not required:
+        return False
+    width = max(len(actual), len(required))
+    normalized_actual = actual + (0,) * (width - len(actual))
+    normalized_required = required + (0,) * (width - len(required))
+    return normalized_actual >= normalized_required
+
+
 def command_candidate() -> tuple[list[str] | None, str, bool]:
     env_bin = os.environ.get("IMSG_BIN")
     if env_bin:
         return [env_bin], f"IMSG_BIN={env_bin}", False
     local_bin = ROOT / "bin" / "imsg"
-    if local_bin.exists() and os.access(local_bin, os.X_OK):
+    if local_bin.exists() and os.access(local_bin, os.X_OK) and compatible_imsg_binary(local_bin):
         return [str(local_bin)], str(local_bin), False
     for build_bin in (ROOT / ".build" / "release" / "imsg", ROOT / ".build" / "debug" / "imsg"):
-        if build_bin.exists() and os.access(build_bin, os.X_OK):
+        if build_bin.exists() and os.access(build_bin, os.X_OK) and compatible_imsg_binary(build_bin):
             return [str(build_bin)], str(build_bin), False
     path_bin = shutil.which("imsg")
-    if path_bin:
+    if path_bin and compatible_imsg_binary(Path(path_bin)):
         return [path_bin], path_bin, False
     swift = shutil.which("swift")
     if swift:

@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -86,6 +87,17 @@ class ImsgMcpTests(unittest.TestCase):
     def test_addressbook_owner_join_uses_numbered_owner_columns(self):
         expr = self.mcp.owner_join_expr("p", {"ZOWNER", "Z21_OWNER", "ZFULLNUMBER"})
         self.assertEqual(expr, "COALESCE(p.ZOWNER, p.Z21_OWNER)")
+
+    def test_incompatible_imsg_binary_is_skipped(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as handle:
+            handle.write("#!/bin/sh\nprintf '0.4.0\\n'\n")
+            path = Path(handle.name)
+        try:
+            path.chmod(path.stat().st_mode | stat.S_IXUSR)
+            self.assertFalse(self.mcp.compatible_imsg_binary(path))
+        finally:
+            if path.exists():
+                path.unlink()
 
     def test_enrich_chat_uses_contact_fallback(self):
         self.mcp._CONTACT_INDEX = {
