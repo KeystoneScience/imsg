@@ -199,6 +199,73 @@ private struct MessagesAfterQuery {
   }
 }
 
+private struct MessagesWindowQuery {
+  let sql: String
+  let bindings: [Binding?]
+  let selection: MessageRowSelection
+
+  init(
+    store: MessageStore,
+    limit: Int,
+    filter: MessageFilter?,
+    isFromMe: Bool?,
+    includeReactions: Bool
+  ) {
+    self.selection = MessageRowSelection(
+      store: store,
+      includeChatID: true,
+      includeBalloonBundleID: true
+    )
+    let destinationCallerColumn =
+      store.schema.hasDestinationCallerID ? "m.destination_caller_id" : "NULL"
+    let reactionFilter: String
+    if includeReactions || !store.schema.hasReactionColumns {
+      reactionFilter = ""
+    } else {
+      reactionFilter =
+        " AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)"
+    }
+    var sql = """
+      SELECT \(selection.selectList)
+      FROM message m
+      LEFT JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
+      LEFT JOIN handle h ON m.handle_id = h.ROWID
+      WHERE 1 = 1\(reactionFilter)
+      """
+    var bindings: [Binding?] = []
+
+    if let isFromMe {
+      sql += " AND m.is_from_me = ?"
+      bindings.append(isFromMe ? 1 : 0)
+    }
+    if let filter {
+      if let startDate = filter.startDate {
+        sql += " AND m.date >= ?"
+        bindings.append(MessageStore.appleEpoch(startDate))
+      }
+      if let endDate = filter.endDate {
+        sql += " AND m.date < ?"
+        bindings.append(MessageStore.appleEpoch(endDate))
+      }
+      if !filter.participants.isEmpty {
+        let placeholders = Array(repeating: "?", count: filter.participants.count).joined(
+          separator: ",")
+        sql +=
+          " AND COALESCE(NULLIF(h.id,''), \(destinationCallerColumn)) COLLATE NOCASE IN (\(placeholders))"
+        for participant in filter.participants {
+          bindings.append(participant)
+        }
+      }
+    }
+
+    sql += " ORDER BY m.date ASC, m.ROWID ASC LIMIT ?"
+    bindings.append(limit)
+
+    self.sql = sql
+    self.bindings = bindings
+  }
+}
+
 private struct LatestSentMessageQuery {
   let sql: String
   let bindings: [Binding?]
@@ -320,6 +387,86 @@ extension MessageStore {
           row,
           columns: query.selection.columns,
           fallbackChatID: query.fallbackChatID
+        )
+        let balloonBundleID = try stringValue(row, MessageRowColumns.balloonBundleID)
+        if balloonBundleID == urlBalloonProvider,
+          shouldSkipURLBalloonDuplicate(
+            chatID: decoded.chatID,
+            sender: decoded.sender,
+            text: decoded.text,
+            isFromMe: decoded.isFromMe,
+            date: decoded.date,
+            rowID: decoded.rowID
+          )
+        {
+          continue
+        }
+
+        let replyToGUID = replyToGUID(
+          associatedGuid: decoded.associatedGUID,
+          associatedType: decoded.associatedType
+        )
+        let reaction = decodeReaction(
+          associatedType: decoded.associatedType,
+          associatedGUID: decoded.associatedGUID,
+          text: decoded.text
+        )
+
+        messages.append(
+          Message(
+            rowID: decoded.rowID,
+            chatID: decoded.chatID,
+            sender: decoded.sender,
+            text: decoded.text,
+            date: decoded.date,
+            isFromMe: decoded.isFromMe,
+            service: decoded.service,
+            handleID: decoded.handleID,
+            attachmentsCount: decoded.attachments,
+            guid: decoded.guid,
+            routing: Message.RoutingMetadata(
+              replyToGUID: replyToGUID,
+              threadOriginatorGUID: decoded.threadOriginatorGUID.isEmpty
+                ? nil : decoded.threadOriginatorGUID,
+              destinationCallerID: decoded.destinationCallerID.isEmpty
+                ? nil : decoded.destinationCallerID
+            ),
+            reaction: Message.ReactionMetadata(
+              isReaction: reaction.isReaction,
+              reactionType: reaction.reactionType,
+              isReactionAdd: reaction.isReactionAdd,
+              reactedToGUID: reaction.reactedToGUID
+            )
+          ))
+      }
+      return messages
+    }
+  }
+
+  public func messages(
+    limit: Int,
+    filter: MessageFilter?,
+    isFromMe: Bool?,
+    includeReactions: Bool = false
+  ) throws -> [Message] {
+    let query = MessagesWindowQuery(
+      store: self,
+      limit: limit,
+      filter: filter,
+      isFromMe: isFromMe,
+      includeReactions: includeReactions
+    )
+
+    return try withConnection { db in
+      var messages: [Message] = []
+      let urlBalloonProvider = "com.apple.messages.URLBalloonProvider"
+
+      let rows = try db.prepareRowIterator(query.sql, bindings: query.bindings)
+      while let row = try rows.failableNext() {
+        let decoded = try decodeMessageRow(
+          row,
+          columns: query.selection.columns,
+          fallbackChatID: nil
         )
         let balloonBundleID = try stringValue(row, MessageRowColumns.balloonBundleID)
         if balloonBundleID == urlBalloonProvider,

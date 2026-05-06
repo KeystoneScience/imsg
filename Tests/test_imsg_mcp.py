@@ -42,6 +42,7 @@ class ImsgMcpTests(unittest.TestCase):
         self.assertIn("imsg_prepare_send", names)
         self.assertIn("imsg_send_reaction", names)
         self.assertIn("imsg_resolve_contacts", names)
+        self.assertIn("imsg_sent_summary", names)
 
     def test_prepare_send_returns_stable_hash(self):
         args = {"to": "+15551234567", "text": "hello", "service": "imessage"}
@@ -130,6 +131,36 @@ class ImsgMcpTests(unittest.TestCase):
         })
         self.assertEqual(message["sender_display_name"], "Me")
         self.assertEqual(message["chat_display_name"], "Alice")
+
+    def test_sent_summary_groups_bulk_report_rows(self):
+        self.mcp._CONTACT_INDEX = {
+            "phones": {"18015551212": "Alice"},
+            "emails": {},
+            "records": 1,
+            "sources": [],
+            "errors": [],
+        }
+
+        def fake_run_imsg(command, timeout=120):
+            self.assertEqual(command[0], "report")
+            self.assertIn("--direction", command)
+            self.assertIn("sent", command)
+            return "\n".join([
+                '{"id":1,"chat_id":7,"chat_identifier":"+18015551212","sender":"+18015551212","is_from_me":true,"text":"hello","created_at":"2026-05-05T01:00:00.000Z","participants":["+18015551212"],"is_group":false}',
+                '{"id":2,"chat_id":7,"chat_identifier":"+18015551212","sender":"+18015551212","is_from_me":true,"text":"later","created_at":"2026-05-05T02:00:00.000Z","participants":["+18015551212"],"is_group":false}',
+            ])
+
+        self.mcp.run_imsg = fake_run_imsg
+        summary = self.mcp.sent_summary({
+            "start": "2026-05-05T00:00:00Z",
+            "end": "2026-05-06T00:00:00Z",
+        })
+        self.assertEqual(summary["count"], 2)
+        self.assertEqual(summary["conversation_count"], 1)
+        conversation = summary["conversations"][0]
+        self.assertEqual(conversation["chat_display_name"], "Alice")
+        self.assertEqual(conversation["message_count"], 2)
+        self.assertEqual(conversation["messages"][0]["sender_display_name"], "Me")
 
     def tearDown(self):
         self.mcp._CONTACT_INDEX = None

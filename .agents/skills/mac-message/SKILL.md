@@ -5,7 +5,7 @@ description: Use for local Apple Messages archive reads, chat history, search, c
 
 # Mac Message
 
-Use this for Messages.app history, chat lookup, streaming, and sends. Reading is local DB access; sending uses Messages automation and must be explicitly requested. When the Codex plugin is installed, prefer the MCP tools first (`imsg_list_chats`, `imsg_read_messages`, `imsg_search_messages`, `imsg_prepare_send`, `imsg_send_message`, `imsg_prepare_reaction`, `imsg_send_reaction`) because they add bounded reads and write approval gates.
+Use this for Messages.app history, chat lookup, streaming, cross-chat sent-message reports, and sends. Reading is local DB access; sending uses Messages automation and must be explicitly requested. When the Codex plugin is installed, prefer the MCP tools first (`imsg_list_chats`, `imsg_read_messages`, `imsg_search_messages`, `imsg_sent_summary`, `imsg_prepare_send`, `imsg_send_message`, `imsg_prepare_reaction`, `imsg_send_reaction`) because they add bounded reads, bulk reporting, and write approval gates.
 
 ## Sources
 
@@ -33,6 +33,12 @@ Read a chat:
 
 ```bash
 imsg history --chat-id ID --json | jq -s
+```
+
+Summarize a sent-message date window across chats:
+
+```bash
+imsg report --direction sent --start 2026-05-05T00:00:00Z --end 2026-05-06T00:00:00Z --json | jq -s
 ```
 
 Use `--attachments` when attachment metadata matters. Use `--start`/`--end` with absolute timestamps for date-scoped questions.

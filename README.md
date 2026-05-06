@@ -39,6 +39,8 @@ Messages.app history and local Contacts metadata.
   including contact-resolved names.
 - `imsg_resolve_contacts`: resolve phone numbers, emails, or Messages handles to
   local Contacts names.
+- `imsg_sent_summary`: bulk-read sent messages across all chats for a date
+  window, grouped by conversation for fast daily summaries.
 - `imsg_prepare_send`: inspect a proposed send payload and return the hash
   required before sending.
 - `imsg_send_message`: send only when the payload hash, confirmation flag,
@@ -86,6 +88,7 @@ For SMS, enable Text Message Forwarding on your iPhone for this Mac.
 - "List my recent Messages chats and tell me what needs attention."
 - "Search my local messages for Sabrina and summarize the latest thread."
 - "Read the latest messages in chat 1292, but do not send anything."
+- "Summarize everything I sent yesterday across all Messages chats."
 - "Prepare a reply to this thread for me to approve."
 - "React with a like to the latest incoming message in this chat."
 - "Check whether the plugin has the permissions it needs."

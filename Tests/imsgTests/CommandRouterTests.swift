@@ -40,6 +40,12 @@ func commandRouterIncludesGroupCommand() {
 }
 
 @Test
+func commandRouterIncludesReportCommand() {
+  let router = CommandRouter()
+  #expect(router.specs.contains { $0.name == "report" })
+}
+
+@Test
 func commandRouterIncludesCompletionsCommand() {
   let router = CommandRouter()
   #expect(router.specs.contains { $0.name == "completions" })

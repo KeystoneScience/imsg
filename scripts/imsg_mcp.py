@@ -609,6 +609,102 @@ def search_messages(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def require_iso_window(args: dict[str, Any]) -> tuple[str, str]:
+    start = str(args.get("start") or "").strip()
+    end = str(args.get("end") or "").strip()
+    if not start:
+        raise ToolError("start is required")
+    if not end:
+        raise ToolError("end is required")
+    return start, end
+
+
+def truncate_text(text: str, max_chars: int) -> tuple[str, bool]:
+    if max_chars < 1 or len(text) <= max_chars:
+        return text, False
+    return text[:max_chars], True
+
+
+def sent_summary(args: dict[str, Any]) -> dict[str, Any]:
+    start, end = require_iso_window(args)
+    limit = clamp_int(args.get("limit"), default=1000, maximum=5000)
+    max_text_chars = clamp_int(args.get("max_text_chars"), default=2000, maximum=20000)
+    include_text = args.get("include_text") is not False
+    command = [
+        "report",
+        *base_args(args),
+        "--direction",
+        "sent",
+        "--start",
+        start,
+        "--end",
+        end,
+        "--limit",
+        str(limit),
+        "--json",
+    ]
+    participants = string_list(args.get("participants"))
+    if participants:
+        command += ["--participants", ",".join(participants)]
+    rows = [enrich_message(row) for row in parse_ndjson(run_imsg(command, timeout=180))]
+
+    conversations: dict[str, dict[str, Any]] = {}
+    for message in rows:
+        chat_id = str(message.get("chat_id") or "")
+        key = chat_id or str(message.get("chat_guid") or message.get("chat_identifier") or "unknown")
+        text = str(message.get("text") or "")
+        rendered_text, truncated = truncate_text(text, max_text_chars)
+        convo = conversations.setdefault(
+            key,
+            {
+                "chat_id": message.get("chat_id"),
+                "chat_identifier": message.get("chat_identifier"),
+                "chat_guid": message.get("chat_guid"),
+                "chat_display_name": message.get("chat_display_name") or message.get("chat_name") or key,
+                "is_group": bool(message.get("is_group")),
+                "participants": message.get("participants") or [],
+                "participant_names": message.get("participant_names") or {},
+                "message_count": 0,
+                "text_chars": 0,
+                "first_at": message.get("created_at"),
+                "last_at": message.get("created_at"),
+                "messages": [],
+            },
+        )
+        convo["message_count"] += 1
+        convo["text_chars"] += len(text)
+        convo["last_at"] = message.get("created_at") or convo["last_at"]
+        if message.get("participant_names"):
+            convo["participant_names"].update(message["participant_names"])
+        item = {
+            "id": message.get("id"),
+            "guid": message.get("guid"),
+            "created_at": message.get("created_at"),
+            "sender_display_name": message.get("sender_display_name"),
+            "text_chars": len(text),
+            "text_truncated": truncated,
+        }
+        if include_text:
+            item["text"] = rendered_text
+        convo["messages"].append(item)
+
+    grouped = sorted(
+        conversations.values(),
+        key=lambda item: (str(item.get("first_at") or ""), str(item.get("chat_display_name") or "")),
+    )
+    return {
+        "start": start,
+        "end": end,
+        "direction": "sent",
+        "count": len(rows),
+        "conversation_count": len(grouped),
+        "limit": limit,
+        "truncated_by_limit": len(rows) >= limit,
+        "conversations": grouped,
+        "scope_note": "Bulk report uses one imsg process and decodes attributedBody before grouping across chats.",
+    }
+
+
 def target_args(args: dict[str, Any]) -> list[str]:
     values: list[tuple[str, str]] = []
     for key, flag in (
@@ -928,6 +1024,24 @@ TOOLS: dict[str, dict[str, Any]] = {
             "resolved": resolve_handles(string_list(args.get("handles"))),
             "contacts": contacts_state(),
         },
+    },
+    "imsg_sent_summary": {
+        "description": "Bulk-read sent messages across all chats for a date window, grouped by conversation for fast daily summaries.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "start": {"type": "string", "description": "Inclusive ISO8601 start timestamp."},
+                "end": {"type": "string", "description": "Exclusive ISO8601 end timestamp."},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 5000, "default": 1000},
+                "participants": {"type": "array", "items": {"type": "string"}},
+                "include_text": {"type": "boolean", "default": True},
+                "max_text_chars": {"type": "integer", "minimum": 1, "maximum": 20000, "default": 2000},
+                "db": {"type": "string", "description": "Optional alternate chat.db path."},
+            },
+            "required": ["start", "end"],
+            "additionalProperties": False,
+        },
+        "handler": sent_summary,
     },
     "imsg_prepare_send": {
         "description": "Inspect a Messages send payload and return the send_sha256 required before sending. Does not send.",

@@ -13,6 +13,7 @@ struct CommandRouter {
       ChatsCommand.spec,
       GroupCommand.spec,
       HistoryCommand.spec,
+      ReportCommand.spec,
       WatchCommand.spec,
       SendCommand.spec,
       ReactCommand.spec,

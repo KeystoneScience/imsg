@@ -107,6 +107,45 @@ func historyCommandJsonReportsDirectChatMetadata() async throws {
 }
 
 @Test
+func reportCommandExportsSentMessagesAcrossChats() async throws {
+  let path = try CommandTestDatabase.makePath()
+  let db = try Connection(path)
+  let now = Date()
+  try db.run(
+    """
+    INSERT INTO message(ROWID, handle_id, text, date, is_from_me, service)
+    VALUES (2, 1, 'sent hello', ?, 1, 'iMessage')
+    """,
+    CommandTestDatabase.appleEpoch(now)
+  )
+  try db.run("INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, 2)")
+  let values = ParsedValues(
+    positional: [],
+    options: [
+      "db": [path],
+      "direction": ["sent"],
+      "start": [CLIISO8601.format(now.addingTimeInterval(-60))],
+      "end": [CLIISO8601.format(now.addingTimeInterval(60))],
+      "limit": ["10"],
+    ],
+    flags: ["jsonOutput"]
+  )
+  let runtime = RuntimeOptions(parsedValues: values)
+  let (output, _) = try await StdoutCapture.capture {
+    try await ReportCommand.run(
+      values: values,
+      runtime: runtime,
+      contactResolverFactory: { NoOpContactResolver() }
+    )
+  }
+  let payload = try jsonObject(from: output)
+  #expect(payload["text"] as? String == "sent hello")
+  #expect(payload["is_from_me"] as? Bool == true)
+  #expect(payload["chat_name"] as? String == "Test Chat")
+  #expect(payload["participants"] as? [String] == ["+123"])
+}
+
+@Test
 func historyCommandRunsWithAttachmentsNonJson() async throws {
   let path = try CommandTestDatabase.makePathWithAttachment()
   let values = ParsedValues(
